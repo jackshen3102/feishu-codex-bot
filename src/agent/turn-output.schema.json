@@ -1,0 +1,9 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "reply"],
+  "properties": {
+    "status": { "type": "string", "enum": ["succeeded", "failed"] },
+    "reply": { "type": "string", "minLength": 1 }
+  }
+}
