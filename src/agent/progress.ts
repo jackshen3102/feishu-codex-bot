@@ -1,7 +1,6 @@
 import type {
   AgentProgressItem,
   AgentProgressSnapshot,
-  AgentProgressState,
   AgentProgressUpdate,
 } from "../contracts.js";
 import { parseTurnReply } from "./output.js";
@@ -82,37 +81,55 @@ function text(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
-function itemState(eventType: string, item: Record<string, unknown>): AgentProgressState {
-  if (eventType === "item.completed") {
-    return item.status === "failed" || item.type === "error" ? "failed" : "completed";
-  }
-  if (item.status === "failed") return "failed";
-  if (item.status === "completed") return "completed";
-  return "running";
-}
-
-function isFinalReply(value: string): boolean {
-  try {
-    parseTurnReply(value);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** Keep only native user-facing agent messages; low-level execution telemetry is not progress UI. */
+/** Keep only complete user-facing messages; never publish raw structured output or telemetry. */
 export function progressUpdateFromThreadEvent(event: unknown): AgentProgressUpdate | null {
   const source = object(event);
-  if (!source || !["item.started", "item.updated", "item.completed"].includes(text(source.type))) return null;
+  if (!source || source.type !== "item.completed") return null;
   const item = object(source.item);
-  if (!item) return null;
+  if (!item || item.type !== "agent_message" || item.phase === "final_answer") return null;
   const id = text(item.id);
-  const type = text(item.type);
-  if (!id || !type) return null;
-  if (type !== "agent_message") return null;
-  const message = text(item.text);
-  if (!message || isFinalReply(message)) return null;
-  return normalizeUpdate({ id, kind: "message", state: itemState(text(source.type), item), title: message });
+  const message = text(item.text).trim();
+  if (!id || !message) return null;
+  let title = message;
+  try {
+    title = parseTurnReply(message).reply;
+  } catch {
+    // Malformed/partial JSON and fenced JSON are not readable progress.
+    if (message.startsWith("{") || message.startsWith("```")) return null;
+  }
+  return normalizeUpdate({ id, kind: "message", state: "completed", title });
+}
+
+/**
+ * Codex exec currently omits message phase. Hold its last message until another
+ * item proves the turn is continuing; turn completion leaves that last message
+ * exclusively to final delivery. Explicit commentary can be shown immediately.
+ */
+export class ThreadProgressTracker {
+  private pending: AgentProgressUpdate | null = null;
+
+  accept(event: unknown): AgentProgressUpdate[] {
+    const source = object(event);
+    if (!source) return [];
+    if (["turn.completed", "turn.failed", "error"].includes(text(source.type))) {
+      this.pending = null;
+      return [];
+    }
+    if (!["item.started", "item.updated", "item.completed"].includes(text(source.type))) return [];
+    const item = object(source.item);
+    if (!item || !text(item.id) || !text(item.type)) return [];
+    const updates: AgentProgressUpdate[] = [];
+    if (this.pending && item.id !== this.pending.id) {
+      updates.push(this.pending);
+      this.pending = null;
+    }
+    const progress = progressUpdateFromThreadEvent(event);
+    if (progress) {
+      if (item.phase === "commentary") updates.push(progress);
+      else this.pending = progress;
+    }
+    return updates;
+  }
 }
 
 /** Fixed-capacity live viewport. Completed history is summarized, never accumulated. */

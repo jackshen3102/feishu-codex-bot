@@ -58,6 +58,26 @@ export class WorkspaceManager {
     return relativePath;
   }
 
+  async writeInputFile(workspacePath: string, storageId: string, data: Buffer, extension: string): Promise<string> {
+    await this.ensure(workspacePath);
+    const real = await fs.realpath(workspacePath);
+    const directory = path.join(real, "input-files");
+    await fs.mkdir(directory, { recursive: true, mode: 0o700 });
+    if ((await fs.lstat(directory)).isSymbolicLink() || !isInside(real, await fs.realpath(directory))) {
+      throw new Error("input directory escaped workspace");
+    }
+    const digest = createHash("sha256").update(storageId).digest("hex");
+    const suffix = /^[a-zA-Z0-9]{1,10}$/.test(extension) ? extension : "bin";
+    const relative = path.posix.join("input-files", `${digest}.${suffix}`);
+    try { await fs.writeFile(path.join(real, relative), data, { mode: 0o600, flag: "wx" }); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      const stat = await fs.lstat(path.join(real, relative));
+      if (!stat.isFile() || stat.isSymbolicLink()) throw new Error("invalid cached input file", { cause: error });
+    }
+    return relative;
+  }
+
   async removeInputImages(workspacePath: string, messageIds: readonly string[]): Promise<void> {
     const resolved = path.resolve(workspacePath);
     if (!isInside(path.resolve(this.root), resolved)) throw new Error("workspace path escaped workspace root");

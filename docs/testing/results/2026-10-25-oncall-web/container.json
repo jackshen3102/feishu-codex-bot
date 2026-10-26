@@ -1,0 +1,22 @@
+{
+  "case": "ONCALLWEB-016",
+  "phase": "passed",
+  "imageId": "sha256:26ddfbe5a7476c8454df46cd4c9e6d58de68fefd0b056fa3e3de89184bd6891f",
+  "portBindings": [
+    {
+      "HostIp": "127.0.0.1",
+      "HostPort": "6193"
+    }
+  ],
+  "passwordMountReadOnly": true,
+  "runtimeUser": "node",
+  "httpAssets": "identical to source",
+  "realSQLiteRead": "passed",
+  "sourceHashComparison": 7,
+  "preparationOverlapNotFalseAlarm": true,
+  "exitCode": 0,
+  "databaseRetained": true,
+  "schemaAndRowsUnchanged": true,
+  "portReleased": true,
+  "containerRemoved": true
+}

@@ -1,0 +1,202 @@
+version: 1
+name: Oncall 只读管理页验收
+description: '验证只读管理页的读取边界、执行与回复状态、历史轮次关联及真实页面行为。 本文件沿用只读管理页合同，并按 2026-10-26 用户要求移除独立管理员认证；结果以实际取证为准。
+  每条用例独立建立临时 fixture；不得使用生产数据库、启动第二个飞书客户端或发送真实消息。
+
+  '
+cases:
+- id: ONCALLWEB-001
+  name: Web 查询不改变业务数据
+  required: true
+  description: 'Web 打开数据库和读取全部接口不执行迁移、恢复、取消、投递或任何业务写入。 临时数据库中的业务表与 schema 在操作前后保持一致。
+
+    '
+  preconditions:
+  - 实施后的 web:verify 可创建临时 SQLite 和真实 HTTP 服务；fixture 中存在排队、运行中、中断和待发送记录。
+  - fixture 未启动 Gateway、scheduler、Codex 或飞书客户端，拥有独立数据库目录。
+  steps:
+  - 使用 pnpm web:verify 建立本用例的临时库，记录 sqlite_master、user_version 和各业务表的逻辑内容摘要。
+  - 通过真实 HTTP 请求读取概览、话题、轮次、案例和工作区；确认响应来自该临时库，读取结束后的逻辑内容摘要与读取前相同。
+  - 在验证器内尝试通过 Web 的数据库连接更新一条任务记录；确认 SQLite 拒绝只读连接写入，记录内容未变。
+  - 关闭本用例 HTTP 服务和只读连接；确认排队和运行中任务未被恢复或取消，未创建任何外部执行。
+- id: ONCALLWEB-002
+  name: 本地入口直接打开页面和数据
+  required: true
+  description: 页面、静态资源和 API 不需要额外管理员认证；没有登录界面、认证弹框或会话 Cookie。
+  preconditions:
+  - 已独立启动临时 Web 服务，HTTP 监听位于 localhost，没有配置 Web 密码文件。
+  - 测试浏览器没有预置 HTTP 凭据、Cookie 或 storage state。
+  steps:
+  - 不带 Authorization 和 Cookie 请求首页、app.js、概览和轮次接口；确认均返回 200，没有 WWW-Authenticate 或 Set-Cookie 响应头。
+  - 使用 $toolkit:playwright-cli 通过 .localhost 预览域名打开历史轮次，刷新并切换四个页面；确认直接显示数据，不出现登录表单，所选历史轮次保持。
+  - 请求原登录页面、登录脚本与认证接口；确认它们不存在，旧会话 Cookie 也不会阻止正常读取。
+- id: ONCALLWEB-003
+  name: HTTP 入口不接受业务写入和跨源请求
+  required: true
+  description: '页面直接打开仍须遵守只读 HTTP 方法及本机来源限制；不存在业务写接口或任意文件读取入口。
+
+    '
+  preconditions:
+  - 本用例独立启动真实 HTTP fixture，不配置额外认证，已记录临时库逻辑摘要。
+  steps:
+  - 对概览、任务和静态资源发送 POST、PUT、PATCH、DELETE、OPTIONS；确认返回 405，且没有放行跨源的 CORS 头。
+  - 使用非本机 Host 或跨源 Origin 发送 GET；确认返回 403；合法 localhost 请求仍可读取。
+  - 请求 public 根以外的路径和经过编码的目录穿越路径；确认不返回配置、口令、数据库或服务源码。
+  - 再次核对临时库逻辑摘要；确认拒绝请求未触发写入。
+- id: ONCALLWEB-004
+  name: 资源查询保持工作区和轮次归属
+  required: true
+  description: '本地管理入口虽然可选择多个配置工作区，但查询必须同时校验 workspace、topic 和 job 的关联，不能混合数据。
+
+    '
+  preconditions:
+  - 独立 fixture 配置两个工作区，各有不同话题、任务和案例；另有一条非 Oncall 旧模式话题。
+  - 执行者通过本地入口直接访问临时 fixture。
+  steps:
+  - 按工作区分别读取列表与概览；确认计数和资源只属于所选工作区，非 Oncall 话题不出现。
+  - 将工作区 A 的话题 ID 与工作区 B 参数组合查询，将 A 话题与 B 任务 ID 组合查询；确认都返回 404。
+  - 查询未配置 workspaceId、缺失 workspaceId、超限 limit 和超过 200 字的 q；确认返回 400 或合同规定的资源 404，不自动降级到全库查询。
+- id: ONCALLWEB-005
+  name: 话题暂停不掩盖正在停止的执行和保留队列
+  required: true
+  description: '同一话题暂停、当前任务正在停止和新请求排队可以同时成立；新排队任务不能覆盖当前执行展示。
+
+    '
+  preconditions:
+  - 独立 fixture 中一个话题 paused=true，有一条 cancel_requested 任务和一条 id 更大的 queued 任务。
+  - 页面指向该 fixture；浏览器不预置认证，具备 Playwright CLI 浏览器入口。
+  steps:
+  - 使用 $toolkit:playwright-cli 打开话题记录；确认上方同时显示话题已暂停、正在停止、排队 1 条。
+  - 切换到排队轮次；确认下方显示排队中且没有虚构结果，上方当前执行仍为正在停止。
+  - 回到概览；确认执行占用包含正在停止的任务，排队计数包含保留的请求，关注话题只计一次。
+- id: ONCALLWEB-006
+  name: 最终回复按全部分片独立聚合
+  required: true
+  description: '状态卡片或第一段发送成功不能证明最终回复全部送达；执行成功不随投递状态改变。
+
+    '
+  preconditions:
+  - 独立 fixture 包含执行 succeeded 的等价任务，final_reply 分片分别为全部 delivered、delivered 加 abandoned、delivered 加 pending、delivering
+    加 pending，以及没有 final_reply。
+  - 这些任务的 status 投递均为 delivered；临时 HTTP 服务可读取它们。
+  steps:
+  - 通过真实 API 查询各轮；确认分别得到 delivered、abandoned、pending、delivering、null，且所有 executionStatus 仍为 succeeded。
+  - 使用 $toolkit:playwright-cli 打开部分发送失败的任务；确认已完成与发送失败同时显示，并显示已发送分片数及总数。
+  - 查看概览；确认失败指标按任务数计数，不按失败分片数计数，发送失败任务仍可出现在本轮已完成筛选中。
+- id: ONCALLWEB-007
+  name: 历史轮次不借用最新结论和证据
+  required: true
+  description: '同一话题的各轮结果、验证状态与证据按 jobId 关联；没有案例记录时不套用话题最新案例。
+
+    '
+  preconditions:
+  - 独立 fixture 中同一话题至少有三轮；第一轮有旧案例，第二轮无案例，第三轮有不同的新案例且成为 oncall_cases 当前记录。
+  - fixture 页面可直接访问，不预置认证。
+  steps:
+  - 使用 $toolkit:playwright-cli 在话题页面依次选择三轮；确认每轮显示自己的请求与结果，第一轮展示旧案例，第二轮不显示验证标签并提示暂无证据，第三轮展示新案例。
+  - 从案例详情点击查看来源轮次；确认地址与选中任务一致，刷新后仍选择该轮，而上方概况保持真实当前任务。
+  - 查看第三轮的混合结论；确认已观察、未验证逐条显示，任务执行成功不将未验证结论变成已验证。
+- id: ONCALLWEB-008
+  name: 缺失或损坏内容不会被填造成真实结果
+  required: true
+  description: '缺失根消息、已清空 input_text、仅附件输入及损坏 JSON 的记录能以可解释的空状态或警告展示。
+
+    '
+  preconditions:
+  - 独立 fixture 包含 input_text 已清空但 oncall_messages 存在的完成任务、根消息缺失任务、仅附件输入任务及损坏 progress_json/case_json 的任务。
+  steps:
+  - 读取轮次 API；确认本轮请求来自匹配的消息表记录，不能读取或返回内部 prompt；附件只返回名称与类型，不包含本地路径或资源 key。
+  - 使用 $toolkit:playwright-cli 查看缺失和损坏记录；确认分别显示无记录或数据警告，其他页面仍可加载，不能展示其他任务结果作为替代。
+- id: ONCALLWEB-009
+  name: 证据文本保持原文且不会成为可执行内容
+  required: true
+  description: '普通证据名称和来源标识仅为文本，只有原文存在的合法 HTTP(S) URL 才提供链接，Agent 内容不能执行脚本。
+
+    '
+  preconditions:
+  - 独立 fixture 的证据包含普通日志名称、feishu-message 标识、本地路径、HTTP(S) 测试链接、javascript 文本和带事件属性的 HTML 文本。
+  - 测试链接指向本用例可控的只读地址，不访问业务生产站点。
+  steps:
+  - 使用 $toolkit:playwright-cli 打开案例与来源轮次；确认日志名称、标识、本地路径保持文本，没有伪造文件查看按钮。
+  - 检查合法 HTTP(S) 链接与原文对应；确认 javascript 文本不生成链接，HTML 作为文字显示且没有脚本执行或意外网络请求。
+  - 确认页面未向服务器发送读取本地证据文件的请求。
+- id: ONCALLWEB-010
+  name: 健康快照过期不会被解释为实时正常
+  required: true
+  description: '页面只展示已有进程快照的状态、采样时间和鲜度，不显示无依据的飞书连接或工具可用性。
+
+    '
+  preconditions:
+  - 独立 fixture 有受控健康文件；执行者可以在该 fixture 内将 sampledAt 调为 90 秒内、超过 90 秒、删除或写入损坏 JSON。
+  steps:
+  - 使用 $toolkit:playwright-cli 在同一 fixture 中依次读取各状态；确认有效快照、已过期、不可用分别展示，过期或损坏不显示实时正常。
+  - 确认页面不存在业务工具绿灯、工具检查时间或飞书实时连接断言；恢复有效文件后下一次刷新能恢复快照显示。
+- id: ONCALLWEB-011
+  name: 搜索分页和页面导航保持结果范围
+  required: true
+  description: '搜索、工作区过滤、分页和历史导航只展示匹配数据；筛选改变后不沿用旧游标或旧详情。
+
+    '
+  preconditions:
+  - 独立 fixture 在两个工作区各有超过 30 条话题与案例，包含相同时间戳、重复摘要、特殊搜索字符和不同 verification。
+  - fixture 页面可通过本地通道直接访问。
+  steps:
+  - 使用 $toolkit:playwright-cli 搜索包含百分号、下划线的字面文本；确认不会变成 SQL 通配匹配；无匹配时显示空状态。
+  - 加载下一页并核对真实 ID；确认同时间戳记录无重复或跳过，切换工作区和筛选会清除旧游标。
+  - 选择含已验证结论筛选；确认任何一条 verified 即满足条件，不要求整份案例全部已验证。
+  - 从列表进入历史轮次后刷新；确认工作区、话题和所选轮次保持一致。
+- id: ONCALLWEB-012
+  name: Web 默认关闭保持原有启动行为
+  required: true
+  description: WEB_ENABLED=false 时原有 Gateway 正常启动，不监听 Web 端口，也不需要密码文件。
+  preconditions:
+  - 隔离生命周期 fixture 使用假飞书适配器和临时数据库，可观察 Gateway 启停；禁止连接真实飞书或 Codex。
+  - Web 关闭且不提供密码文件，已记录 fixture 任务状态。
+  steps:
+  - 启动本用例服务；确认 Gateway 正常启动，没有 Web HTTP 监听，也没有 Web 配置错误。
+  - 确认没有第二个飞书客户端或由 Web 触发的任务变更；按既有流程关闭本用例资源。
+- id: ONCALLWEB-013
+  name: Web 启动失败不停止既有机器人
+  required: true
+  description: 配置无效或端口冲突时，Web 启动失败只影响管理入口，不使已启动 Gateway 退出或重放任务。
+  preconditions:
+  - 隔离生命周期 fixture 使用假飞书适配器和临时数据库，可记录 Gateway 状态；禁止真实外部连接。
+  - 每个等价输入使用本用例自建的独立临时实例，分别配置无效端口值、已占用端口。
+  steps:
+  - 对两种等价失败条件分别启动服务；确认 Web 不开放，Gateway 均保持运行，日志只有脱敏错误。
+  - 对比各实例任务记录；确认 Web 失败不产生恢复、取消或重放动作；关闭本用例实例及占用端口的临时进程。
+- id: ONCALLWEB-014
+  name: 服务退出关闭 Web 自有资源
+  required: true
+  description: 正常启用 Web 后，有序停止能够关闭 HTTP 和只读连接，同时沿用既有 Gateway 停止逻辑。
+  preconditions:
+  - 本用例独立 fixture 使用假飞书适配器和临时数据库，Web 正常启用且可以直接查询。
+  - 执行者已记录监听端口、Gateway 启停观察记录和 fixture 数据目录。
+  steps:
+  - 读取一次页面和 API 后发出服务停止信号；确认 HTTP 监听和只读连接关闭，Gateway 原有停止逻辑执行。
+  - 确认本用例进程退出、端口释放，数据目录保留且没有 Web 额外的业务写入或任务重放。
+- id: ONCALLWEB-015
+  name: 桌面和窄屏页面只提供浏览操作
+  required: true
+  description: '四个页面在桌面与窄屏下可浏览，无业务写入控件；工作区配置和来源路径均为只读信息。
+
+    '
+  preconditions:
+  - 独立 fixture 已启动，至少有一个有数据工作区和一个空配置工作区；测试浏览器无预置认证。
+  steps:
+  - 使用 $toolkit:playwright-cli 分别以 1440×1000 和 390×844 打开概览、话题、案例库和工作区；确认无横向溢出，搜索、详情关闭及轮次选择可用。
+  - 检查页面和网络请求；确认没有发起分析、停止、继续、补充上下文、修改结论或配置保存入口，仅有 GET/HEAD 查询。
+  - 打开空配置工作区；确认显示实际为空，不补写原型中的仓库数、人员、工具或业务分类；保存最终页面截图并注明浏览器来源。
+- id: ONCALLWEB-016
+  name: 容器只向本机开放可选 Web 端口
+  required: true
+  description: 'Docker 制品包含静态资源；Web overlay 只向 loopback 发布端口，不改变默认关闭行为，不需要生产凭据。
+
+    '
+  preconditions:
+  - 已构建待交付镜像；有专属于本用例的临时数据目录，容器入口只启动 Web fixture，不启动真实 Gateway。
+  - 执行环境支持 Docker；不使用生产卷和生产 compose project。
+  steps:
+  - 用待交付镜像启动临时容器；通过 localhost 直接访问页面和 API，确认静态文件来自镜像且查询内容来自临时 SQLite。
+  - 读取容器端口映射；确认宿主绑定仅为 127.0.0.1:6193，没有发布到所有网卡，也没有 Web 密码文件挂载。
+  - 关闭并移除本用例容器后检查临时数据；确认数据仍保留，退出不删除数据卷；默认 compose 不含已启用 Web 入口。

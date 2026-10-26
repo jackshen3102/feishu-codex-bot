@@ -42,16 +42,19 @@ function progressElements(job: Job): Array<Record<string, unknown>> {
   return elements;
 }
 
-export function renderJobStatusCard(job: Job, context: StatusViewContext = {}): string {
+export function renderJobStatusCard(job: Job, context: StatusViewContext = {}, finalReply?: string): string {
   const header = cardHeader(job.executionStatus);
+  const status = renderJobStatus(job, context);
+  const content = finalReply === undefined ? status : finalReply +
+    (context.finalReplyState === "abandoned" ? `\n\n---\n${status}` : "");
   return JSON.stringify({
-    config: { wide_screen_mode: true },
+    config: { wide_screen_mode: true, update_multi: true },
     header: {
       title: { tag: "plain_text", content: header.title },
       template: header.template,
     },
     elements: [
-      { tag: "markdown", content: renderJobStatus(job, context) },
+      { tag: "markdown", content },
       ...progressElements(job),
     ],
   });

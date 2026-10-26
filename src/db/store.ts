@@ -1,3 +1,5 @@
+import { agentSettingsSchema, type AgentSettings } from "../agent/settings.js";
+import { CaseStore } from "../oncall/case-store.js";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -380,6 +382,7 @@ export class Store {
         .prepare(
           `SELECT 1 FROM jobs
            WHERE execution_status IN ('queued', 'running', 'cancel_requested')
+             AND NOT EXISTS (SELECT 1 FROM oncall_topics o WHERE o.topic_id = jobs.topic_id AND o.paused = 1)
            LIMIT 1`,
         )
         .get(),
@@ -438,7 +441,7 @@ export class Store {
     }
     return {
       schemaVersion: this.database.pragma("user_version", { simple: true }) as number,
-      backend: this.getAgentBackend(),
+      backend: this.getAgentSettings().backend,
       lastExecution: lastExecution ? {
         jobId: lastExecution.id,
         status: lastExecution.execution_status,
@@ -470,6 +473,7 @@ export class Store {
           `SELECT j.id FROM jobs j
            WHERE j.execution_status IN ('succeeded', 'failed', 'cancelled', 'interrupted')
              AND j.finished_at < ?
+             AND NOT EXISTS (SELECT 1 FROM oncall_topics o WHERE o.topic_id = j.topic_id)
              AND EXISTS (
                SELECT 1 FROM job_deliveries final_delivery
                WHERE final_delivery.job_id = j.id AND final_delivery.kind = 'final_reply'
@@ -551,9 +555,10 @@ export class Store {
     return row.count;
   }
 
-  getQueueWaitReason(jobId: number): "topic" | "capacity" | null {
+  getQueueWaitReason(jobId: number): "topic" | "capacity" | "paused" | null {
     const job = this.getJob(jobId);
     if (!job || job.executionStatus !== "queued") return null;
+    if (this.database.prepare("SELECT 1 FROM oncall_topics WHERE topic_id = ? AND paused = 1").get(job.topicId)) return "paused";
     const blocker = this.database.prepare(
       `SELECT 1 FROM jobs WHERE topic_id = ? AND
        (execution_status IN ('running', 'cancel_requested')
@@ -606,14 +611,17 @@ export class Store {
           `SELECT j.* FROM jobs j
            WHERE j.execution_status = 'queued'
              AND j.input_text IS NOT NULL
+             AND NOT EXISTS (SELECT 1 FROM oncall_topics o WHERE o.topic_id = j.topic_id AND o.paused = 1)
              AND NOT EXISTS (
                SELECT 1 FROM jobs active
                WHERE active.topic_id = j.topic_id
                  AND active.execution_status IN ('running', 'cancel_requested')
              )
-             AND j.id = (
-               SELECT MIN(first_job.id) FROM jobs first_job
-               WHERE first_job.topic_id = j.topic_id AND first_job.execution_status = 'queued'
+             AND j.id = COALESCE(
+               (SELECT r.id FROM oncall_topics o JOIN jobs r ON r.id = o.resume_job_id
+                WHERE o.topic_id = j.topic_id AND r.execution_status = 'queued'),
+               (SELECT MIN(first_job.id) FROM jobs first_job
+               WHERE first_job.topic_id = j.topic_id AND first_job.execution_status = 'queued')
              )
            ORDER BY j.id
            LIMIT ?`,
@@ -658,8 +666,16 @@ export class Store {
     const row = this.database
       .prepare("SELECT value FROM service_metadata WHERE key = 'agent_backend'")
       .get() as { value: string } | undefined;
-    if (row?.value !== "codex") throw new Error("state database has no valid agent backend");
+    if (row?.value !== "codex" && row?.value !== "traex") throw new Error("state database has no valid agent backend");
     return row.value;
+  }
+
+  private pauseOncallTopic(topicId: string, reason: string): void {
+    const updated = this.database.prepare("UPDATE oncall_topics SET paused = 1, pause_reason = ?, resume_job_id = NULL WHERE topic_id = ?")
+      .run(reason, topicId);
+    if (!updated.changes) return;
+    const queued = this.database.prepare("SELECT id FROM jobs WHERE topic_id = ? AND execution_status = 'queued'").all(topicId) as Array<{ id: number }>;
+    for (const job of queued) this.markStatusDirty(job.id);
   }
 
   completeExecution(jobId: number, result: TurnReply, failureKind: string | null): CompletionDecision {
@@ -673,6 +689,8 @@ export class Store {
       const target: ExecutionStatus = result.status === "succeeded" ? "succeeded" : "failed";
       if (!canTransition(current.executionStatus, target)) return { kind: "conflict", job: current };
       const timestamp = now();
+      const oncallFailure = target === "failed" && this.database.prepare("SELECT 1 FROM oncall_topics WHERE topic_id = ?").get(current.topicId);
+      const reply = oncallFailure ? `${result.reply}\n本话题已暂停。处理异常后请明确回复“继续”，先核对现场再恢复排队请求。` : result.reply;
       const update = this.database
         .prepare(
           `UPDATE jobs
@@ -680,7 +698,7 @@ export class Store {
                status_version = status_version + 1, finished_at = ?
            WHERE id = ? AND execution_status = 'running'`,
         )
-        .run(result.reply, target, failureKind, timestamp, jobId);
+        .run(reply, target, failureKind, timestamp, jobId);
       if (update.changes !== 1) {
         const latest = this.getJob(jobId);
         if (latest?.executionStatus === "cancel_requested") return { kind: "cancel_requested", job: latest };
@@ -688,6 +706,14 @@ export class Store {
         return { kind: "conflict", job: latest };
       }
       const job = this.requireJob(jobId);
+      if (result.caseSummary) new CaseStore(this.database).save(job.topicId, job.id, result.caseSummary);
+      else if (target === "succeeded" && !this.database.prepare("SELECT 1 FROM oncall_cases WHERE topic_id = ?").get(job.topicId)) {
+        new CaseStore(this.database).save(job.topicId, job.id, {
+          summary: result.reply.slice(0, 4000), conclusions: [{ text: result.reply.slice(0, 4000), verification: "unverified" }],
+          evidence: [`feishu-message:${job.feishuMessageId}`],
+        });
+      }
+      if (target === "failed") this.pauseOncallTopic(job.topicId, "failed");
       this.mergeTerminalDeliveries(job, timestamp);
       this.database.prepare("UPDATE topics SET last_active_at = ? WHERE id = ?").run(timestamp, job.topicId);
       return { kind: "completed", job };
@@ -709,9 +735,11 @@ export class Store {
                status_version = status_version + 1, finished_at = ?
            WHERE id = ? AND execution_status = 'running'`,
         )
-        .run(safeError, failureKind, timestamp, jobId);
+        .run(this.database.prepare("SELECT 1 FROM oncall_topics WHERE topic_id = ?").get(current.topicId)
+          ? "任务已中断，话题已暂停。请明确回复“继续”，核对已执行的外部动作后恢复。" : safeError, failureKind, timestamp, jobId);
       if (result.changes !== 1) return { kind: "conflict", job: this.getJob(jobId) };
       const job = this.requireJob(jobId);
+      this.pauseOncallTopic(job.topicId, "interrupted");
       this.mergeTerminalDeliveries(job, timestamp);
       this.database.prepare("UPDATE topics SET last_active_at = ? WHERE id = ?").run(timestamp, job.topicId);
       return { kind: "completed", job };
@@ -829,9 +857,10 @@ export class Store {
       const recovered: RecoveredExecution[] = [];
       for (const row of rows) {
         const previousStatus = row.execution_status as RecoveredExecution["previousStatus"];
-        const resultText = previousStatus === "preparing"
-          ? "任务输入接收中断，请重新发送原请求。"
-          : INTERRUPTED_RESULT_TEXT;
+        const isOncall = this.database.prepare("SELECT 1 FROM oncall_topics WHERE topic_id = ?").get(row.topic_id);
+        const resultText = isOncall
+          ? "任务已中断，话题与排队请求已暂停。请明确回复“继续”，先核对已执行的外部动作再恢复。"
+          : previousStatus === "preparing" ? "任务输入接收中断，请重新发送原请求。" : INTERRUPTED_RESULT_TEXT;
         const result = this.database
           .prepare(
             `UPDATE jobs
@@ -849,6 +878,7 @@ export class Store {
         if (result.changes !== 1) throw new Error("recovery status conflict");
         const job = this.requireJob(row.id);
         this.mergeTerminalDeliveries(job, timestamp);
+        this.pauseOncallTopic(job.topicId, "interrupted");
         recovered.push({ job, previousStatus });
       }
       this.database
@@ -1056,7 +1086,10 @@ export class Store {
 
   staleTopics(before: string): Topic[] {
     return (
-      this.database.prepare("SELECT * FROM topics WHERE last_active_at < ? ORDER BY last_active_at").all(before) as TopicRow[]
+      this.database.prepare(`SELECT * FROM topics WHERE last_active_at < ?
+         AND NOT EXISTS (SELECT 1 FROM oncall_topics o WHERE o.topic_id = topics.id)
+         AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.topic_id = topics.id AND j.execution_status IN ('preparing','queued','running','cancel_requested'))
+         ORDER BY last_active_at`).all(before) as TopicRow[]
     ).map(mapTopic);
   }
 
@@ -1174,16 +1207,32 @@ export class Store {
       .run(jobId);
   }
 
+  getAgentSettings(): AgentSettings {
+    const row = this.database.prepare("SELECT value FROM service_metadata WHERE key = 'agent_settings'").get() as { value: string } | undefined;
+    return row ? agentSettingsSchema.parse(JSON.parse(row.value)) : { backend: this.getAgentBackend(), model: null };
+  }
+
+  setAgentSettings(value: AgentSettings): AgentSettings {
+    const settings = agentSettingsSchema.parse(value);
+    this.database.prepare("INSERT INTO service_metadata(key, value) VALUES ('agent_settings', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(JSON.stringify(settings));
+    return settings;
+  }
+
+  getBackendSession(topicId: string, backend: AgentBackend): string | null {
+    const row = this.database.prepare("SELECT session_id FROM topic_agent_sessions WHERE topic_id = ? AND backend = ?").get(topicId, backend) as { session_id: string } | undefined;
+    // Preserve sessions created by the legacy scheduler as well.
+    return row?.session_id ?? (backend === this.getAgentBackend() ? this.getTopic(topicId)?.agentSessionId ?? null : null);
+  }
+
+  setBackendSession(topicId: string, backend: AgentBackend, sessionId: string): void {
+    const current = this.getBackendSession(topicId, backend);
+    if (current && current !== sessionId) throw new Error("topic already belongs to a different agent session");
+    this.database.prepare("INSERT INTO topic_agent_sessions(topic_id, backend, session_id) VALUES (?, ?, ?) ON CONFLICT(topic_id, backend) DO UPDATE SET session_id = excluded.session_id").run(topicId, backend, sessionId);
+  }
+
   private bindAgentBackend(backend: AgentBackend): void {
-    this.database.transaction(() => {
-      const row = this.database
-        .prepare("SELECT value FROM service_metadata WHERE key = 'agent_backend'")
-        .get() as { value: string } | undefined;
-      if (!row) {
-        this.database.prepare("INSERT INTO service_metadata(key, value) VALUES ('agent_backend', ?)").run(backend);
-        return;
-      }
-      if (row.value !== backend) throw new Error("State database belongs to a different agent backend");
-    })();
+    // This records the owner of legacy topics.agent_session_id; live selection is separate.
+    this.database.prepare("INSERT OR IGNORE INTO service_metadata(key, value) VALUES ('agent_backend', ?)").run(backend);
+    this.getAgentBackend();
   }
 }

@@ -88,7 +88,7 @@ function createLegacyFixture(databasePath: string, workspaceRoot: string, versio
 async function createVersion7Fixture(databasePath: string, workspaceRoot: string): Promise<void> {
   const database = new Database(databasePath);
   const schema = await fs.readFile(new URL("../src/db/schema.sql", import.meta.url), "utf8");
-  database.exec(schema);
+  database.exec(schema.split("CREATE TABLE IF NOT EXISTS oncall_topics")[0]!);
   database.exec("DROP TABLE ingress_controls; DROP TABLE private_topic_bindings;");
   database.exec("ALTER TABLE jobs DROP COLUMN execution_mode;");
   database.exec("ALTER TABLE jobs DROP COLUMN progress_json;");
@@ -123,7 +123,7 @@ async function createVersion7Fixture(databasePath: string, workspaceRoot: string
 async function createVersion8Fixture(databasePath: string, workspaceRoot: string): Promise<void> {
   const database = new Database(databasePath);
   const schema = await fs.readFile(new URL("../src/db/schema.sql", import.meta.url), "utf8");
-  database.exec(schema);
+  database.exec(schema.split("CREATE TABLE IF NOT EXISTS oncall_topics")[0]!);
   database.exec("ALTER TABLE jobs DROP COLUMN execution_mode;");
   database.exec("ALTER TABLE jobs DROP COLUMN progress_json;");
   database.prepare("INSERT INTO topics VALUES (?, NULL, ?, ?, ?)").run(
@@ -144,7 +144,7 @@ async function createVersion8Fixture(databasePath: string, workspaceRoot: string
 async function createVersion9Fixture(databasePath: string, workspaceRoot: string): Promise<void> {
   const database = new Database(databasePath);
   const schema = await fs.readFile(new URL("../src/db/schema.sql", import.meta.url), "utf8");
-  database.exec(schema);
+  database.exec(schema.split("CREATE TABLE IF NOT EXISTS oncall_topics")[0]!);
   database.exec("ALTER TABLE jobs DROP COLUMN progress_json;");
   database.prepare("INSERT INTO topics VALUES (?, NULL, ?, ?, ?)").run(
     "topic-v9",
@@ -174,7 +174,7 @@ async function createVersion9Fixture(databasePath: string, workspaceRoot: string
 async function createVersion10Fixture(databasePath: string, workspaceRoot: string): Promise<void> {
   const database = new Database(databasePath);
   const schema = await fs.readFile(new URL("../src/db/schema.sql", import.meta.url), "utf8");
-  database.exec(schema);
+  database.exec(schema.split("CREATE TABLE IF NOT EXISTS oncall_topics")[0]!);
   database.exec(`
     DROP INDEX idx_job_deliveries_due;
     DROP INDEX idx_job_deliveries_lease;
@@ -236,12 +236,12 @@ function seed(store: Store, messageId: string, input: string | null = "input") {
 
 describe("restart recovery and schema migration", () => {
   for (const version of [1, 2, 3, 4, 5, 6]) {
-    it(`upgrades a version-${version} database to v11 without losing lifecycle facts`, async () => {
+    it(`upgrades a version-${version} database to v13 without losing lifecycle facts`, async () => {
       const { config, root } = await tempConfig();
       createLegacyFixture(config.STATE_DB_PATH, config.WORKSPACE_ROOT, version);
       const store = new Store(config.STATE_DB_PATH, config.WORKSPACE_ROOT);
       try {
-        expect(store.database.pragma("user_version", { simple: true })).toBe(11);
+        expect(store.database.pragma("user_version", { simple: true })).toBe(13);
         expect(store.getTopic("topic")?.agentSessionId).toBe("session");
         expect(store.getAllJobs().map((job) => job.executionStatus)).toEqual([
           "queued",
@@ -281,7 +281,7 @@ describe("restart recovery and schema migration", () => {
     await createVersion7Fixture(config.STATE_DB_PATH, config.WORKSPACE_ROOT);
     const store = new Store(config.STATE_DB_PATH, config.WORKSPACE_ROOT);
     try {
-      expect(store.database.pragma("user_version", { simple: true })).toBe(11);
+      expect(store.database.pragma("user_version", { simple: true })).toBe(13);
       expect(store.getTopic("topic-v7")?.agentSessionId).toBe("session-v7");
       expect(store.count("private_topic_bindings")).toBe(0);
       expect(store.count("ingress_controls")).toBe(0);
@@ -299,7 +299,7 @@ describe("restart recovery and schema migration", () => {
     await createVersion8Fixture(config.STATE_DB_PATH, config.WORKSPACE_ROOT);
     const store = new Store(config.STATE_DB_PATH, config.WORKSPACE_ROOT);
     try {
-      expect(store.database.pragma("user_version", { simple: true })).toBe(11);
+      expect(store.database.pragma("user_version", { simple: true })).toBe(13);
       expect(store.getJob(1)?.executionMode).toBe("sandboxed");
       expect(store.getJob(1)?.progress).toBeNull();
       expect(store.database.pragma("foreign_key_check")).toEqual([]);
@@ -314,7 +314,7 @@ describe("restart recovery and schema migration", () => {
     await createVersion9Fixture(config.STATE_DB_PATH, config.WORKSPACE_ROOT);
     const store = new Store(config.STATE_DB_PATH, config.WORKSPACE_ROOT);
     try {
-      expect(store.database.pragma("user_version", { simple: true })).toBe(11);
+      expect(store.database.pragma("user_version", { simple: true })).toBe(13);
       expect(store.getJob(1)).toMatchObject({ executionMode: "unrestricted", progress: null });
       expect(store.getDelivery(1, "status")).toMatchObject({
         state: "delivered",
@@ -333,7 +333,7 @@ describe("restart recovery and schema migration", () => {
     await createVersion10Fixture(config.STATE_DB_PATH, config.WORKSPACE_ROOT);
     const store = new Store(config.STATE_DB_PATH, config.WORKSPACE_ROOT);
     try {
-      expect(store.database.pragma("user_version", { simple: true })).toBe(11);
+      expect(store.database.pragma("user_version", { simple: true })).toBe(13);
       expect(store.getDelivery(1, "final_reply")).toMatchObject({
         sequence: 0,
         payloadText: "durable v10 result",
@@ -451,6 +451,8 @@ describe("restart recovery and schema migration", () => {
     await workspaces.initialize();
     const job = seed(store, "old");
     const topic = store.getTopic(job.topicId)!;
+    store.claimRunnableJobs(1);
+    store.completeExecution(job.id, { status: "succeeded", reply: "done" }, null);
     await workspaces.ensure(topic.workspacePath);
     store.database.prepare("UPDATE topics SET last_active_at = ? WHERE id = ?").run("2020-01-01T00:00:00.000Z", topic.id);
     const removed = await workspaces.cleanup(store, 7, Date.parse("2020-01-09T00:00:00.000Z"));
@@ -462,5 +464,83 @@ describe("restart recovery and schema migration", () => {
     expect(await fs.stat(topic.workspacePath)).toBeTruthy();
     store.close();
     await removeTemp(root);
+  });
+});
+
+describe("Oncall persistent recovery", () => {
+  it("adds v12 Oncall tables to an existing v11 database without changing jobs, sessions or outbox", async () => {
+    const { config, root } = await tempConfig();
+    let store = new Store(config.STATE_DB_PATH, config.WORKSPACE_ROOT);
+    try {
+      const job = seed(store, "v11-running");
+      store.setAgentSessionId(job.topicId, "v11-session");
+      store.claimRunnableJobs(1);
+      store.completeExecution(job.id, { status: "succeeded", reply: "undelivered result" }, null);
+      const before = { jobs: store.getAllJobs(), deliveries: store.listDeliveries() };
+      store.database.exec("DROP TABLE oncall_case_history; DROP TABLE oncall_cases; DROP TABLE oncall_messages; DROP TABLE oncall_topics;");
+      store.database.pragma("user_version = 11");
+      store.close();
+      store = new Store(config.STATE_DB_PATH, config.WORKSPACE_ROOT);
+      expect(store.database.pragma("user_version", { simple: true })).toBe(13);
+      expect(store.getAllJobs()).toEqual(before.jobs);
+      expect(store.listDeliveries()).toEqual(before.deliveries);
+      expect(store.getTopic(job.topicId)?.agentSessionId).toBe("v11-session");
+      for (const table of ["oncall_topics", "oncall_messages", "oncall_cases", "oncall_case_history"]) {
+        expect(store.database.prepare(`SELECT count(*) AS count FROM ${table}`).get()).toEqual({ count: 0 });
+      }
+      expect(store.database.pragma("foreign_key_check")).toEqual([]);
+    } finally {
+      if (store.database.open) store.close();
+      await removeTemp(root);
+    }
+  });
+
+  it("pauses an interrupted topic across restart while preserving its queue and letting other topics run", async () => {
+    const { config, root } = await tempConfig();
+    let store = new Store(config.STATE_DB_PATH, config.WORKSPACE_ROOT);
+    try {
+      const active = seed(store, "oncall-active");
+      store.database.prepare(`INSERT INTO oncall_topics(topic_id, workspace_id, chat_id, root_id, owner_open_id)
+        VALUES (?, 'infra', 'target-chat', 'oncall-active', 'user-1')`).run(active.topicId);
+      const queued = store.acceptJob({ messageId: "oncall-queued", chatId: "target-chat", parentId: "oncall-active",
+        requesterOpenId: "user-2", allowNewTopic: false, existingTopicInput: "follow-up", newTopicInput: "follow-up" }).job!;
+      const other = seed(store, "other-topic");
+      expect(store.claimRunnableJobs(1)[0]?.id).toBe(active.id);
+      store.close();
+      store = new Store(config.STATE_DB_PATH, config.WORKSPACE_ROOT);
+      expect(store.recoverUncertainExecutions().map((item) => item.job.id)).toEqual([active.id]);
+      expect(store.database.prepare("SELECT paused, pause_reason FROM oncall_topics WHERE topic_id = ?").get(active.topicId))
+        .toEqual({ paused: 1, pause_reason: "interrupted" });
+      expect(store.claimRunnableJobs(5).map((job) => job.id)).toEqual([other.id]);
+      expect(store.getJob(queued.id)?.executionStatus).toBe("queued");
+      store.close();
+      store = new Store(config.STATE_DB_PATH, config.WORKSPACE_ROOT);
+      store.recoverUncertainExecutions();
+      expect(store.claimRunnableJobs(5)).toEqual([]);
+      expect(store.getJob(queued.id)?.executionStatus).toBe("queued");
+    } finally {
+      if (store.database.open) store.close();
+      await removeTemp(root);
+    }
+  });
+
+  it("retains queued, running and paused workspaces even after their retention deadline", async () => {
+    const { config, root } = await tempConfig();
+    const store = new Store(config.STATE_DB_PATH, config.WORKSPACE_ROOT);
+    const workspaces = new WorkspaceManager(config.WORKSPACE_ROOT, path.resolve("workspace-template"));
+    await workspaces.initialize();
+    try {
+      const jobs = [seed(store, "running-old"), seed(store, "queued-old"), seed(store, "paused-old")];
+      store.claimRunnableJobs(1);
+      store.database.prepare(`INSERT INTO oncall_topics(topic_id, workspace_id, chat_id, root_id, owner_open_id, paused)
+        VALUES (?, 'infra', 'target-chat', 'paused-old', 'user-1', 1)`).run(jobs[2]!.topicId);
+      for (const job of jobs) await workspaces.ensure(store.getTopic(job.topicId)!.workspacePath);
+      store.database.prepare("UPDATE topics SET last_active_at = '2020-01-01T00:00:00.000Z'").run();
+      expect(await workspaces.cleanup(store, 7, Date.parse("2026-01-01T00:00:00.000Z"))).toEqual([]);
+      for (const job of jobs) expect((await fs.stat(store.getTopic(job.topicId)!.workspacePath)).isDirectory()).toBe(true);
+    } finally {
+      store.close();
+      await removeTemp(root);
+    }
   });
 });

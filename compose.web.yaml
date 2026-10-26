@@ -1,0 +1,9 @@
+# Opt-in management endpoint. Combine with compose.yaml; never publish on all interfaces.
+services:
+  bot:
+    environment:
+      WEB_ENABLED: "true"
+      WEB_HOST: "0.0.0.0"
+      WEB_PORT: "6193"
+    ports:
+      - "127.0.0.1:6193:6193"

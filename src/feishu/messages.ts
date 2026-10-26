@@ -1,6 +1,6 @@
 import type { Readable } from "node:stream";
 import type { Client } from "@larksuiteoapi/node-sdk";
-import type { ReplyReceipt } from "../contracts.js";
+import type { FeishuMessageEvent, ReplyReceipt } from "../contracts.js";
 import type { DesiredReaction } from "../jobs/status-view.js";
 export { stableIngressReplyUuid } from "../jobs/delivery-ids.js";
 
@@ -73,6 +73,8 @@ async function readLimited(stream: Readable, maxBytes: number): Promise<Buffer> 
 }
 
 export interface FeishuDelivery {
+  fetchFile?(messageId: string, fileKey: string, maxBytes: number): Promise<Buffer>;
+  fetchTopicHistory?(chatId: string, rootId: string, threadId?: string): Promise<{ events: FeishuMessageEvent[]; truncated: boolean }>;
   addReaction(messageId: string, emojiType: DesiredReaction): Promise<string>;
   removeReaction(messageId: string, reactionId: string): Promise<void>;
   listReactions(messageId: string): Promise<MessageReaction[]>;
@@ -201,6 +203,49 @@ export class LarkFeishuDelivery implements FeishuDelivery {
     });
     const data = await readLimited(response.getReadableStream(), maxBytes);
     return { data, ...identifyImage(data) };
+  }
+
+  async fetchFile(messageId: string, fileKey: string, maxBytes: number): Promise<Buffer> {
+    const response = await this.client.im.v1.messageResource.get({
+      path: { message_id: messageId, file_key: fileKey }, params: { type: "file" },
+    });
+    return readLimited(response.getReadableStream(), maxBytes);
+  }
+
+  async fetchTopicHistory(chatId: string, rootId: string, threadId?: string): Promise<{ events: FeishuMessageEvent[]; truncated: boolean }> {
+    const root = await this.client.im.v1.message.get({ path: { message_id: rootId } });
+    assertApiResponse(root, "read topic root");
+    const first = root.data?.items?.[0];
+    if (!first || first.chat_id !== chatId) throw new Error("topic root is unavailable in this chat");
+    const items = [...(root.data?.items ?? [])];
+    const thread = threadId ?? first.thread_id;
+    let truncated = !thread;
+    if (thread) {
+      // Bound the automatic pre-read; report the gap instead of silently claiming full history.
+      const response = await this.client.im.v1.message.list({ params: {
+        container_id_type: "thread", container_id: thread, page_size: 50, sort_type: "ByCreateTimeDesc",
+      } });
+      assertApiResponse(response, "read topic history");
+      items.push(...(response.data?.items ?? []));
+      truncated = Boolean(response.data?.has_more);
+    }
+    const seen = new Set<string>();
+    const events: FeishuMessageEvent[] = [];
+    for (const item of items.sort((a, b) => Number(a.create_time ?? 0) - Number(b.create_time ?? 0))) {
+      if (!item.message_id || seen.has(item.message_id) || item.deleted || item.chat_id !== chatId || !item.body?.content) continue;
+      if (item.message_id !== rootId && item.root_id !== rootId && (!thread || item.thread_id !== thread)) continue;
+      seen.add(item.message_id);
+      events.push({
+        sender: { sender_type: item.sender?.sender_type ?? "unknown", sender_id: { open_id: item.sender?.id } },
+        message: {
+          message_id: item.message_id, chat_id: chatId, chat_type: "history",
+          message_type: item.msg_type ?? "unknown", content: item.body.content,
+          root_id: rootId, create_time: item.create_time, thread_id: item.thread_id,
+          mentions: item.mentions?.map((m) => ({ key: m.key, id: { open_id: m.id }, name: m.name })),
+        },
+      });
+    }
+    return { events, truncated };
   }
 }
 

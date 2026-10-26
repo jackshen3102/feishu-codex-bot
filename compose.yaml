@@ -1,0 +1,47 @@
+name: feishu-oncall
+services:
+  bot:
+    image: ${ONCALL_IMAGE:-feishu-oncall:local}
+    build:
+      context: .
+      target: runtime
+      args:
+        VCS_REF: ${ONCALL_REVISION:-unknown}
+        HTTP_PROXY: ${HTTP_PROXY:-}
+        HTTPS_PROXY: ${HTTPS_PROXY:-}
+        NO_PROXY: ${NO_PROXY:-}
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 60s
+    env_file:
+      - ${ONCALL_ENV_FILE:?Set ONCALL_ENV_FILE to the new application environment file}
+    environment:
+      HOME: /data
+      CODEX_HOME: /data/codex
+      STATE_DB_PATH: /data/state/bot.db
+      WORKSPACE_ROOT: /data/topics
+      ONCALL_CONFIG_PATH: /config/oncall.json
+      HTTP_PROXY: ${HTTP_PROXY:-}
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      NO_PROXY: ${NO_PROXY:-}
+    volumes:
+      - oncall-data:/data
+      - type: bind
+        source: ${ONCALL_CONFIG_DIR:?Set ONCALL_CONFIG_DIR to the dedicated configuration directory}
+        target: /config
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${ONCALL_KNOWLEDGE_DIR:?Set ONCALL_KNOWLEDGE_DIR to the business knowledge directory}
+        target: /knowledge
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${ONCALL_TOOL_HOME:?Set ONCALL_TOOL_HOME to a dedicated tool configuration directory}
+        target: /tool-home
+        bind:
+          create_host_path: false
+volumes:
+  oncall-data:

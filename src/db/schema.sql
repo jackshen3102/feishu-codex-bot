@@ -96,3 +96,50 @@ CREATE INDEX IF NOT EXISTS idx_job_deliveries_lease
   ON job_deliveries(state, lease_started_at);
 CREATE INDEX IF NOT EXISTS idx_job_deliveries_topic_order
   ON job_deliveries(kind, state, job_id, sequence);
+
+CREATE TABLE IF NOT EXISTS oncall_topics (
+  topic_id TEXT PRIMARY KEY REFERENCES topics(id),
+  workspace_id TEXT NOT NULL,
+  chat_id TEXT NOT NULL,
+  root_id TEXT NOT NULL,
+  owner_open_id TEXT NOT NULL,
+  paused INTEGER NOT NULL DEFAULT 0,
+  pause_reason TEXT,
+  resume_job_id INTEGER,
+  UNIQUE(chat_id, root_id)
+);
+CREATE TABLE IF NOT EXISTS oncall_messages (
+  sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+  message_id TEXT NOT NULL UNIQUE,
+  chat_id TEXT NOT NULL,
+  root_id TEXT NOT NULL,
+  sender TEXT NOT NULL,
+  content_json TEXT NOT NULL,
+  source_time TEXT,
+  received_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_oncall_messages_topic ON oncall_messages(chat_id, root_id, sequence);
+CREATE TABLE IF NOT EXISTS oncall_cases (
+  topic_id TEXT PRIMARY KEY REFERENCES topics(id),
+  workspace_id TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  conclusions_json TEXT NOT NULL,
+  evidence_json TEXT NOT NULL,
+  last_job_id INTEGER NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_oncall_cases_workspace ON oncall_cases(workspace_id, updated_at);
+CREATE TABLE IF NOT EXISTS oncall_case_history (
+  job_id INTEGER PRIMARY KEY,
+  topic_id TEXT NOT NULL,
+  case_json TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS topic_agent_sessions (
+  topic_id TEXT NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
+  backend TEXT NOT NULL CHECK (backend IN ('codex', 'traex')),
+  session_id TEXT NOT NULL,
+  PRIMARY KEY(topic_id, backend),
+  UNIQUE(backend, session_id)
+);

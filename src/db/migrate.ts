@@ -297,7 +297,7 @@ function migrateLegacy(database: Database.Database, version: number, schema: str
   database.pragma(`user_version = ${TARGET_VERSION}`);
 }
 
-export function migrate(database: Database.Database): void {
+function migrateV11(database: Database.Database): void {
   database.pragma("journal_mode = WAL");
   database.pragma("foreign_keys = ON");
   database.pragma("busy_timeout = 5000");
@@ -338,4 +338,35 @@ export function migrate(database: Database.Database): void {
 
   database.transaction(() => migrateLegacy(database, version, schema))();
   validateV11(database);
+}
+
+// Keep the legacy migration intact; additive Oncall tables do not change its row shapes.
+export function migrate(database: Database.Database): void {
+  const version = database.pragma("user_version", { simple: true }) as number;
+  if (version > 13) throw new Error(`Unsupported database schema version: ${version}`);
+  if (version < 12) {
+    migrateV11(database);
+    database.transaction(() => {
+      database.exec(fs.readFileSync(new URL("./schema.sql", import.meta.url), "utf8"));
+      database.pragma("user_version = 12");
+    })();
+  } else {
+    database.pragma("journal_mode = WAL");
+    database.pragma("foreign_keys = ON");
+    database.pragma("busy_timeout = 5000");
+    validateV11(database);
+  }
+  if (version < 13) {
+    database.transaction(() => {
+      database.exec(fs.readFileSync(new URL("./schema.sql", import.meta.url), "utf8"));
+      database.exec(`INSERT OR IGNORE INTO topic_agent_sessions(topic_id, backend, session_id)
+        SELECT id, COALESCE((SELECT value FROM service_metadata WHERE key = 'agent_backend'), 'codex'), agent_session_id
+        FROM topics WHERE agent_session_id IS NOT NULL`);
+      database.pragma("user_version = 13");
+    })();
+  }
+  if (!tableExists(database, "topic_agent_sessions")) throw new Error("Schema v13 is missing topic_agent_sessions");
+  for (const name of ["oncall_topics", "oncall_messages", "oncall_cases", "oncall_case_history"]) {
+    if (!tableExists(database, name)) throw new Error(`Schema v12 is missing table: ${name}`);
+  }
 }

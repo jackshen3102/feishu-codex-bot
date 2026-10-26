@@ -1,3 +1,4 @@
+import type { CaseSummary } from "./oncall/case-store.js";
 export type ExecutionStatus =
   | "preparing"
   | "queued"
@@ -80,6 +81,7 @@ export interface JobDelivery {
 }
 
 export interface TurnReply {
+  caseSummary?: CaseSummary;
   status: "succeeded" | "failed";
   reply: string;
 }
@@ -106,6 +108,8 @@ export interface FeishuMessageEvent {
   };
   message: {
     message_id: string;
+    create_time?: string;
+    thread_id?: string;
     root_id?: string;
     parent_id?: string;
     chat_id: string;
