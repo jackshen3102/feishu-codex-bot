@@ -117,3 +117,34 @@ describe("Feishu delivery adapter", () => {
     expect(cardStatusProjection(readBack)).toEqual(cardStatusProjection(cardJson));
   });
 });
+
+describe("Oncall evidence downloads", () => {
+  it("downloads a log attachment as a file and enforces the configured byte limit", async () => {
+    const content = Buffer.from("line one\nline two\n");
+    const { client, get } = resourceClient([content.subarray(0, 4), content.subarray(4)]);
+    const delivery = new LarkFeishuDelivery(client);
+    expect(await delivery.fetchFile("log-message", "log-key", content.length)).toEqual(content);
+    expect(get).toHaveBeenCalledWith({ path: { message_id: "log-message", file_key: "log-key" }, params: { type: "file" } });
+    await expect(delivery.fetchFile("log-message", "log-key", content.length - 1)).rejects.toThrow(/size limit/);
+  });
+
+  it("reads ordered thread history while rejecting foreign, deleted and duplicated messages and reporting gaps", async () => {
+    const item = (id: string, time: string) => ({ message_id: id, chat_id: "chat", root_id: "root",
+      thread_id: "thread", create_time: time, sender: { id: "user", sender_type: "user" },
+      msg_type: "text", body: { content: JSON.stringify({ text: id }) } });
+    const get = vi.fn(async () => ({ code: 0, data: { items: [item("root", "1")] } }));
+    const list = vi.fn(async () => ({ code: 0, data: { has_more: true, items: [
+      item("third", "3"), item("second", "2"), item("root", "1"),
+      { ...item("foreign", "4"), chat_id: "other-chat" },
+      { ...item("deleted", "5"), deleted: true },
+      { ...item("unrelated", "6"), root_id: "other-root", thread_id: "other-thread" },
+    ] } }));
+    const delivery = new LarkFeishuDelivery({ im: { v1: { message: { get, list } } } } as unknown as Client);
+    const history = await delivery.fetchTopicHistory("chat", "root");
+    expect(history.truncated).toBe(true);
+    expect(history.events.map((event) => event.message.message_id)).toEqual(["root", "second", "third"]);
+    expect(history.events.every((event) => event.sender.sender_id?.open_id === "user")).toBe(true);
+    expect(list).toHaveBeenCalledWith({ params: { container_id_type: "thread", container_id: "thread", page_size: 50, sort_type: "ByCreateTimeDesc" } });
+    await expect(delivery.fetchTopicHistory("another-chat", "root")).rejects.toThrow(/unavailable/);
+  });
+});

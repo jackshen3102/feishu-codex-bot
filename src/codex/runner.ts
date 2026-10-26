@@ -4,8 +4,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Codex, type Thread } from "@openai/codex-sdk";
 import { buildCommonAgentEnvironment } from "../agent/environment.js";
-import { FORMAT_CORRECTION_PROMPT, parseTurnReply, turnOutputSchema } from "../agent/output.js";
-import { progressUpdateFromThreadEvent } from "../agent/progress.js";
+import { FORMAT_CORRECTION_PROMPT, oncallTurnOutputSchema, parseTurnReply, turnOutputSchema } from "../agent/output.js";
+import { ThreadProgressTracker } from "../agent/progress.js";
 import {
   AgentAuthenticationError,
   TurnTimeoutError,
@@ -18,6 +18,8 @@ import type { Job, Topic, TurnReply } from "../contracts.js";
 
 export interface CodexRunnerOptions {
   timeoutMs: number;
+  model?: string | null;
+  oncall?: boolean;
   codex?: Codex;
   sandboxedCodex?: Codex;
   unrestrictedCodex?: Codex;
@@ -35,6 +37,7 @@ const AUTHENTICATION_FAILURE_MARKERS = [
   "token_expired",
   "not logged in",
   "please run codex login",
+  "please run trae",
   "missing bearer or basic authentication",
   "401 unauthorized",
   "invalid_api_key",
@@ -90,13 +93,19 @@ export function createCodexClients(config: CodexAppConfig): {
   unrestrictedCodex: Codex;
 } {
   const runtime = resolveBundledCodexRuntime();
+  const environment = buildCodexEnvironment(config);
+  const processGroupWrapper = fileURLToPath(new URL("../../scripts/codex-process-group.mjs", import.meta.url));
+  const unrestrictedCodex = new Codex({
+    codexPathOverride: config.ONCALL_CONFIG_PATH ? processGroupWrapper : runtime.binary,
+    env: environment,
+  });
+  // Oncall runs inside its dedicated Docker boundary in both private and group
+  // chats. Do not launch the host unshare wrapper inside that container.
+  if (config.ONCALL_CONFIG_PATH) return { sandboxedCodex: unrestrictedCodex, unrestrictedCodex };
   const isolationWrapper = fileURLToPath(new URL("../../scripts/codex-isolated.sh", import.meta.url));
   return {
-    sandboxedCodex: new Codex({ codexPathOverride: isolationWrapper, env: buildCodexEnvironment(config) }),
-    unrestrictedCodex: new Codex({
-      codexPathOverride: runtime.binary,
-      env: buildCodexEnvironment(config),
-    }),
+    sandboxedCodex: new Codex({ codexPathOverride: isolationWrapper, env: environment }),
+    unrestrictedCodex,
   };
 }
 
@@ -115,13 +124,14 @@ export class CodexRunner implements TurnRunner {
     const controller = new AbortController();
     this.active.set(job.id, controller);
     let timedOut = false;
-    const timeout = setTimeout(() => {
+    const timeout = this.options.timeoutMs > 0 ? setTimeout(() => {
       timedOut = true;
       controller.abort();
-    }, this.options.timeoutMs);
+    }, this.options.timeoutMs) : undefined;
 
     try {
       const threadOptions = {
+        model: this.options.model ?? undefined,
         threadSource: "feishu-codex-bot",
         sandboxMode: job.executionMode === "unrestricted" ? "danger-full-access" as const : "workspace-write" as const,
         workingDirectory: topic.workspacePath,
@@ -180,14 +190,17 @@ export class CodexRunner implements TurnRunner {
     reportProgress?: AgentProgressReporter,
     reportSession?: AgentSessionReporter,
   ): Promise<string> {
-    const streamed = await thread.runStreamed(input, { outputSchema: turnOutputSchema, signal });
+    const streamed = await thread.runStreamed(input, {
+      outputSchema: this.options.oncall ? oncallTurnOutputSchema : turnOutputSchema,
+      signal,
+    });
     let lastAgentMessage: string | null = null;
     let completed = false;
+    const progressTracker = new ThreadProgressTracker();
 
     for await (const event of streamed.events) {
       if (event.type === "thread.started") reportSession?.(event.thread_id);
-      const progress = progressUpdateFromThreadEvent(event);
-      if (progress) reportProgress?.(progress);
+      for (const progress of progressTracker.accept(event)) reportProgress?.(progress);
       if (event.type === "item.completed" && event.item.type === "agent_message") {
         lastAgentMessage = event.item.text;
       } else if (event.type === "turn.completed") {

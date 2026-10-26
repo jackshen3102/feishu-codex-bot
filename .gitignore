@@ -1,7 +1,11 @@
 node_modules/
 dist/
 .env
+.env.*
+runtime/
 *.db
 *.db-shm
 *.db-wal
 coverage/
+.playwright-cli/
+artifacts/

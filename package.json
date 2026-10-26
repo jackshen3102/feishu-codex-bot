@@ -1,19 +1,22 @@
 {
   "name": "feishu-codex-bot",
-  "version": "0.2.5",
+  "version": "0.3.1",
   "private": true,
   "type": "module",
   "engines": {
     "node": ">=22 <23"
   },
   "scripts": {
-    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json && cp src/db/schema.sql dist/db/schema.sql && cp src/agent/turn-output.schema.json dist/agent/turn-output.schema.json",
+    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json && cp src/db/schema.sql dist/db/schema.sql && cp src/agent/turn-output.schema.json dist/agent/turn-output.schema.json && cp -R src/web/public dist/web/public",
     "lint": "eslint .",
     "preflight": "tsx scripts/preflight.ts",
     "start": "node dist/main.js",
     "status": "node dist/status.js",
     "test": "vitest run",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "web:verify": "tsx scripts/verify-management-web.ts",
+    "web:fixture": "tsx scripts/management-web-fixture.ts",
+    "package:core": "pnpm build && node -e \"require('node:fs').mkdirSync('artifacts',{recursive:true})\" && npm pack --pack-destination artifacts"
   },
   "packageManager": "pnpm@11.17.0+sha512.cca3cea332ad254bb84145f966d19f4879615210346fc92c79a047f23a0d7b3cca3c3792f0076ba1f1831d277efbcf0a9119b31a9a60eca7fb3d6231f331ef72",
   "dependencies": {
@@ -31,5 +34,27 @@
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.69.0",
     "vitest": "^4.1.11"
-  }
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/bootstrap.d.ts",
+      "import": "./dist/bootstrap.js"
+    },
+    "./web": {
+      "types": "./dist/web/index.d.ts",
+      "import": "./dist/web/index.js"
+    },
+    "./oncall": {
+      "types": "./dist/oncall/workspace-config.d.ts",
+      "import": "./dist/oncall/workspace-config.js"
+    },
+    "./schema": "./dist/db/schema.sql",
+    "./web-public": "./dist/web/public/index.html"
+  },
+  "files": [
+    "dist/",
+    "scripts/codex-isolated.sh",
+    "scripts/codex-process-group.mjs",
+    "workspace-template/"
+  ]
 }

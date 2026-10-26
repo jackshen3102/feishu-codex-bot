@@ -2,6 +2,7 @@ import type { Job, JobDelivery } from "../contracts.js";
 import type { Store } from "../db/store.js";
 import type { DesiredReaction } from "../jobs/status-view.js";
 import { renderJobStatusCard } from "../jobs/status-card.js";
+import { splitFinalReply } from "../jobs/final-reply.js";
 import { desiredReaction } from "../jobs/status-view.js";
 import { errorKind, logger } from "../logging.js";
 import {
@@ -141,11 +142,21 @@ export class OutboxWorker {
 
   private async deliverStatus(job: Job, delivery: JobDelivery): Promise<void> {
     const finalReplyState = this.store.getFinalReplyState(job.id) ?? undefined;
+    const firstReply = this.store.getDelivery(job.id, "final_reply");
+    let finalReply: string | undefined;
+    if (firstReply?.state === "delivered") {
+      // A late status retry must never erase a result already delivered in this card.
+      if (!delivery.messageId) return;
+      if (firstReply.messageId === delivery.messageId) {
+        if (finalReplyState !== "abandoned" || !job.resultText) return;
+        finalReply = splitFinalReply(job.resultText)[0];
+      }
+    }
     const cardJson = renderJobStatusCard(job, {
       queueWaitReason: this.store.getQueueWaitReason(job.id) ?? undefined,
       finalReplyState,
       now: this.now(),
-    });
+    }, finalReply);
     let messageId = delivery.messageId;
     if (!messageId) {
       if (!delivery.stableUuid) throw new Error("status delivery UUID is unavailable");
@@ -170,6 +181,31 @@ export class OutboxWorker {
 
   private async deliverFinalReply(job: Job, delivery: JobDelivery): Promise<void> {
     if (!delivery.payloadText || !delivery.stableUuid) throw new Error("final reply payload is unavailable");
+    const status = this.store.getDelivery(job.id, "status");
+    const cardJson = renderJobStatusCard(job, {}, delivery.payloadText);
+    // Keep overflow chunks as ordered replies. Check the serialized request, since
+    // JSON escaping can make an otherwise small text exceed the card size limit.
+    if (delivery.sequence === 0 && status?.messageId && status.state !== "abandoned" &&
+        (!delivery.messageId || delivery.messageId === status.messageId) &&
+        Buffer.byteLength(JSON.stringify({ content: cardJson }), "utf8") <= 30 * 1024) {
+      try {
+        await this.withTimeout(this.delivery.updateCard(status.messageId, cardJson));
+        this.assertRunning();
+        // The successful update response acknowledges delivery. Feishu's GET
+        // returns a lossy rendered-text view, not the original Markdown; comparing
+        // them would reject valid replies and later overwrite them with an error.
+        const chatId = this.store.getBindingChatId(job.feishuMessageId);
+        if (!chatId) throw new Error("source message binding is unavailable");
+        if (!this.store.recordDeliveryMessage(delivery.id, chatId, { messageId: status.messageId })) {
+          throw new Error("final reply lease changed while recording card receipt");
+        }
+        return;
+      } catch (error) {
+        // Only a definitively uneditable card permits a separate text reply.
+        // Transient failures retry the same card through the durable outbox.
+        if (!(error instanceof PermanentStatusMessageError)) throw error;
+      }
+    }
     const receipt = await this.withTimeout(
       this.delivery.reply(job.feishuMessageId, delivery.payloadText, delivery.stableUuid),
     );

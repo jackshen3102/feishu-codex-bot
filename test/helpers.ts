@@ -85,6 +85,10 @@ export class FakeDelivery implements FeishuDelivery {
   readonly fetchedText = new Map<string, string>();
   readonly referencedImages = new Map<string, string>();
   readonly fetchedImages = new Map<string, DownloadedImage>();
+  readonly fetchedFiles = new Map<string, Buffer>();
+  readonly topicHistories = new Map<string, { events: FeishuMessageEvent[]; truncated: boolean }>();
+  readonly historyRequests: Array<{ chatId: string; rootId: string; threadId?: string }> = [];
+  readonly fileRequests: Array<{ messageId: string; fileKey: string; maxBytes: number }> = [];
   readonly imageRequests: Array<{ messageId: string; imageKey: string; maxBytes: number }> = [];
   readonly activeTyping = new Map<string, string>();
   readonly done = new Set<string>();
@@ -172,6 +176,20 @@ export class FakeDelivery implements FeishuDelivery {
     const imageKey = this.referencedImages.get(messageId);
     if (imageKey !== undefined) return { type: "image", imageKey };
     throw new Error("message unavailable");
+  }
+
+  async fetchFile(messageId: string, fileKey: string, maxBytes: number): Promise<Buffer> {
+    this.fileRequests.push({ messageId, fileKey, maxBytes });
+    const file = this.fetchedFiles.get(messageId);
+    if (!file || file.length > maxBytes) throw new Error("file unavailable");
+    return file;
+  }
+
+  async fetchTopicHistory(chatId: string, rootId: string, threadId?: string): Promise<{ events: FeishuMessageEvent[]; truncated: boolean }> {
+    this.historyRequests.push({ chatId, rootId, threadId });
+    const history = this.topicHistories.get(rootId);
+    if (!history) throw new Error("history unavailable");
+    return history;
   }
 
   async fetchImage(messageId: string, imageKey: string, maxBytes: number): Promise<DownloadedImage> {

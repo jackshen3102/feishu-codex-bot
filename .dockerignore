@@ -1,0 +1,16 @@
+.git
+node_modules
+dist
+coverage
+test
+docs
+.env
+.env.*
+runtime
+*.db
+*.db-shm
+*.db-wal
+**/auth.json
+**/credentials*
+**/*.pem
+**/*.key

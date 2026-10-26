@@ -115,7 +115,8 @@ export class Scheduler {
     const progressController = new AbortController();
     const elapsedProgress = this.reportElapsedProgress(job, progressController.signal);
     const eventProgress = this.createEventProgress(job);
-    let turnResult: TurnReply = { status: "failed", reply: FAILURE_REPLY };
+    const failureReply = this.config.ONCALL_CONFIG_PATH ? "任务执行异常，已保留现场。" : FAILURE_REPLY;
+    let turnResult: TurnReply = { status: "failed", reply: failureReply };
     let failureKind: string | null;
     try {
       await this.workspaces.ensure(topic.workspacePath);
@@ -135,8 +136,8 @@ export class Scheduler {
         eventProgress.report,
         (sessionId) => this.store.setAgentSessionId(topic.id, sessionId),
       );
-      const protectedOutput = containsProtectedCredential(this.config, result.reply);
-      turnResult = protectedOutput ? { status: "failed", reply: FAILURE_REPLY } : result;
+      const protectedOutput = containsProtectedCredential(this.config, JSON.stringify(result));
+      turnResult = protectedOutput ? { status: "failed", reply: failureReply } : result;
       failureKind = result.status === "failed" ? "agent_failed" : protectedOutput ? "protected_output" : null;
     } catch (error) {
       failureKind = errorKind(error);

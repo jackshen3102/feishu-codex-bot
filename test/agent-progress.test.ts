@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   MAX_PROGRESS_SNAPSHOT_BYTES,
   ProgressWindow,
+  ThreadProgressTracker,
   progressUpdateFromThreadEvent,
 } from "../src/agent/progress.js";
 
@@ -47,7 +48,7 @@ describe("bounded agent progress window", () => {
     expect(Buffer.byteLength(JSON.stringify(snapshot), "utf8")).toBeLessThanOrEqual(MAX_PROGRESS_SNAPSHOT_BYTES);
   });
 
-  it("keeps native user-facing messages and drops execution telemetry and final JSON", () => {
+  it("keeps readable messages and drops execution telemetry and explicit final answers", () => {
     expect(progressUpdateFromThreadEvent({
       type: "item.updated",
       item: { id: "reason", type: "reasoning", text: "检查依赖关系" },
@@ -79,11 +80,52 @@ describe("bounded agent progress window", () => {
     });
     expect(progressUpdateFromThreadEvent({
       type: "item.completed",
-      item: { id: "agent", type: "agent_message", text: '{"status":"succeeded","reply":"final reply"}' },
+      item: { id: "agent", type: "agent_message", phase: "final_answer", text: '{"status":"succeeded","reply":"final reply"}' },
     })).toBeNull();
     expect(progressUpdateFromThreadEvent({
       type: "item.completed",
       item: { id: "error", type: "error", message: "Authorization: secret" },
     })).toBeNull();
+  });
+});
+
+
+describe("Codex progress versus final delivery", () => {
+  const message = (id: string, reply: string, phase?: string) => ({
+    type: "item.completed",
+    item: { id, type: "agent_message", phase, text: JSON.stringify({ status: "succeeded", reply, caseSummary: null }) },
+  });
+
+  it("unwraps structured commentary as soon as execution continues, retaining the final answer", () => {
+    const tracker = new ThreadProgressTracker();
+    expect(tracker.accept(message("first", "正在核对日志"))).toEqual([]);
+    expect(tracker.accept({ type: "item.started", item: { id: "tool", type: "command_execution", command: "private command" } }))
+      .toEqual([{ id: "first", kind: "message", state: "completed", title: "正在核对日志" }]);
+    expect(tracker.accept({ type: "item.completed", item: { id: "tool", type: "command_execution", aggregated_output: "private output" } })).toEqual([]);
+    expect(tracker.accept(message("final", "最终结论"))).toEqual([]);
+    expect(tracker.accept({ type: "turn.completed" })).toEqual([]);
+    expect(tracker.accept({ type: "item.started", item: { id: "later", type: "reasoning" } })).toEqual([]);
+  });
+
+  it("uses explicit phases and still publishes earlier commentary before another message", () => {
+    const tracker = new ThreadProgressTracker();
+    expect(tracker.accept(message("known", "已找到证据", "commentary"))).toMatchObject([{ title: "已找到证据" }]);
+    expect(tracker.accept(message("unknown", "正在复核"))).toEqual([]);
+    expect(tracker.accept(message("final", "结论", "final_answer"))).toMatchObject([{ title: "正在复核" }]);
+    expect(tracker.accept({ type: "turn.completed" })).toEqual([]);
+  });
+
+  it.each(["turn.failed", "error", "turn.completed"])("discards an unconfirmed final candidate on %s", (type) => {
+    const tracker = new ThreadProgressTracker();
+    expect(tracker.accept(message("candidate", "尚未确认"))).toEqual([]);
+    expect(tracker.accept({ type })).toEqual([]);
+    expect(tracker.accept({ type: "item.started", item: { id: "other", type: "reasoning" } })).toEqual([]);
+  });
+
+  it("never publishes partial, malformed or fenced JSON", () => {
+    for (const text of ['{"status":"succeeded","reply":"partial', '{"unknown":"private"}', '```json\n{"reply":"hidden"}\n```']) {
+      expect(progressUpdateFromThreadEvent({ type: "item.completed", item: { id: "message", type: "agent_message", text } })).toBeNull();
+    }
+    expect(progressUpdateFromThreadEvent({ type: "item.updated", item: { id: "message", type: "agent_message", text: "partial" } })).toBeNull();
   });
 });

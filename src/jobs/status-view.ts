@@ -3,7 +3,7 @@ import type { DeliveryState, Job } from "../contracts.js";
 export type DesiredReaction = "Typing" | "DONE" | "CrossMark" | "Alarm";
 
 export interface StatusViewContext {
-  queueWaitReason?: "topic" | "capacity";
+  queueWaitReason?: "topic" | "capacity" | "paused";
   finalReplyState?: DeliveryState;
   now?: number;
 }
@@ -17,7 +17,7 @@ export function renderJobStatus(job: Job, context: StatusViewContext = {}): stri
     case "preparing":
       return "正在接收任务内容…";
     case "queued":
-      return context.queueWaitReason === "topic"
+      return context.queueWaitReason === "paused" ? "本话题已暂停，等待明确“继续”。" : context.queueWaitReason === "topic"
         ? "排队中，等待本话题前序任务完成。"
         : "排队中，等待可用执行名额。";
     case "running": {

@@ -1,0 +1,14 @@
+# Optional TRAE runtime. Use a pinned, Linux-compatible TRAE release directory,
+# containing traex and its companion executables, with no account credentials.
+services:
+  bot:
+    environment:
+      TRAEX_BINARY: /opt/traex/traex
+      TRAEX_HOME: /data/traex
+    volumes:
+      - type: bind
+        source: ${TRAEX_RUNTIME_DIR:?Set TRAEX_RUNTIME_DIR to the dedicated TRAE release directory}
+        target: /opt/traex
+        read_only: true
+        bind:
+          create_host_path: false

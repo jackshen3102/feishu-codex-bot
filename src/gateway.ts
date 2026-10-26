@@ -1,6 +1,9 @@
+import type { AgentControl } from "./agent/settings.js";
+import { OncallIngress } from "./oncall/ingress.js";
+import { loadOncallConfig } from "./oncall/workspace-config.js";
 import fs from "node:fs/promises";
-import path from "node:path";
-import { createTurnRunner } from "./agent/factory.js";
+import { fileURLToPath } from "node:url";
+import { assertTraexAvailable, createTurnRunner } from "./agent/factory.js";
 import { activeAgentHome, type AppConfig } from "./config.js";
 import { CancellationController } from "./control/cancellation.js";
 import { Store } from "./db/store.js";
@@ -42,12 +45,12 @@ export class Gateway {
     const health = new HealthReporter(store, healthStatusPath(config.STATE_DB_PATH));
     try {
       await health.publish("starting");
-      const workspaces = new WorkspaceManager(config.WORKSPACE_ROOT, path.join(process.cwd(), "workspace-template"));
+      const workspaces = new WorkspaceManager(config.WORKSPACE_ROOT, fileURLToPath(new URL("../workspace-template/", import.meta.url)));
       await workspaces.initialize();
       await workspaces.cleanup(store, config.WORKSPACE_RETENTION_DAYS);
       await Gateway.recover(store, workspaces, config.JOB_RETENTION_DAYS);
 
-      const runner = createTurnRunner(config);
+      const runner = createTurnRunner(config, store);
       const larkClient = createLarkClient(config);
       const delivery = new LarkFeishuDelivery(larkClient, config.FEISHU_APP_ID);
       const botOpenId = await resolveBotOpenId(larkClient);
@@ -61,7 +64,9 @@ export class Gateway {
         executionReady: () => scheduler.wake(),
         deliveryReady: () => outbox.wake(),
       };
-      const ingress = new FeishuIngress(
+      const ingress = config.ONCALL_CONFIG_PATH ? new OncallIngress(
+        config, loadOncallConfig(config.ONCALL_CONFIG_PATH), botOpenId, store, delivery, signals, workspaces, runner,
+      ) : new FeishuIngress(
         config,
         botOpenId,
         store,
@@ -80,6 +85,16 @@ export class Gateway {
       store.close();
       throw error;
     }
+  }
+
+  get agentControl(): AgentControl {
+    return {
+      get: () => this.store.getAgentSettings(),
+      set: settings => {
+        if (settings.backend === "traex") assertTraexAvailable(this.config);
+        return this.store.setAgentSettings(settings);
+      },
+    };
   }
 
   async start(): Promise<void> {

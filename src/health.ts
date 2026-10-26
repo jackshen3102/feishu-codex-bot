@@ -17,7 +17,7 @@ const healthStatusSchema = z.object({
     lastIngressAt: z.string().datetime().nullable(),
   }).strict(),
   schemaVersion: z.number().int().nonnegative(),
-  backend: z.literal("codex"),
+  backend: z.enum(["codex", "traex"]),
   lastExecution: z.object({
     jobId: z.number().int().positive(),
     status: z.enum(["succeeded", "failed", "cancelled", "interrupted"]),

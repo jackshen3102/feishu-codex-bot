@@ -1,0 +1,398 @@
+{
+  "workspace": "infra-workspace",
+  "topics": [
+    {
+      "id": "OC-028",
+      "title": "Sheet 落地页快照未就绪",
+      "description": "HTML_REPLAY_PEER_SNAPSHOT_NOT_READY",
+      "source": "性能 Oncall 群",
+      "area": "Sheet",
+      "owner": "陈",
+      "time": "14:32",
+      "paused": false,
+      "jobs": [
+        {
+          "id": "JOB-180",
+          "executionStatus": "succeeded",
+          "createdAt": "2026-10-25 14:20",
+          "request": "核对错误出现的位置。",
+          "resultText": "错误栈指向快照就绪检查，尚无完整根因结论。",
+          "progress": null,
+          "replyState": "delivered"
+        },
+        {
+          "id": "JOB-280",
+          "executionStatus": "succeeded",
+          "createdAt": "2026-10-25 14:32",
+          "request": "HTML_REPLAY_PEER_SNAPSHOT_NOT_READY",
+          "resultText": "异常发生在快照就绪检查，尚未进入正式性能采样。现有日志不足以判断是环境准备时序，还是模板依赖问题。\n能补充一下这次运行的回放环境，以及同环境最近一次成功的任务吗？",
+          "progress": null,
+          "replyState": "abandoned"
+        }
+      ]
+    },
+    {
+      "id": "OC-027",
+      "title": "Docx 首屏指标发生回退",
+      "description": "待测分支 TTU diff 超过流水线阈值",
+      "source": "性能 Oncall 群",
+      "area": "Docx",
+      "owner": "林",
+      "time": "14:28",
+      "paused": false,
+      "jobs": [
+        {
+          "id": "JOB-279",
+          "executionStatus": "running",
+          "createdAt": "2026-10-25 14:28",
+          "request": "待测分支 TTU diff 超过流水线阈值",
+          "resultText": null,
+          "progress": "正在核对来源流水线的指标口径、实际版本与过滤规则，结论尚未形成。",
+          "replyState": null
+        }
+      ]
+    },
+    {
+      "id": "OC-026",
+      "title": "回放资源返回 403",
+      "description": "下载阶段无法获取资源",
+      "source": "我的私聊",
+      "area": "基础设施",
+      "owner": "我",
+      "time": "14:21",
+      "paused": true,
+      "jobs": [
+        {
+          "id": "JOB-178",
+          "executionStatus": "succeeded",
+          "createdAt": "2026-10-24 16:00",
+          "request": "分析已有记录。",
+          "resultText": "资源请求已观察到 403。签名有效期、访问主体与资源权限仍需进一步核对。",
+          "progress": null,
+          "replyState": "delivered"
+        },
+        {
+          "id": "JOB-278",
+          "executionStatus": "cancel_requested",
+          "createdAt": "2026-10-25 14:21",
+          "request": "下载阶段无法获取资源",
+          "resultText": null,
+          "progress": "已收到停止请求，当前执行仍在退出。",
+          "replyState": null
+        },
+        {
+          "id": "JOB-290",
+          "executionStatus": "queued",
+          "createdAt": "2026-10-25 14:24",
+          "request": "补充了资源记录，请结合记录分析。",
+          "resultText": null,
+          "progress": null,
+          "replyState": null
+        }
+      ]
+    },
+    {
+      "id": "OC-025",
+      "title": "Slide 切页耗时波动",
+      "description": "同一用例两次执行结果不一致",
+      "source": "性能 Oncall 群",
+      "area": "Slide",
+      "owner": "周",
+      "time": "14:18",
+      "paused": false,
+      "jobs": [
+        {
+          "id": "JOB-177",
+          "executionStatus": "succeeded",
+          "createdAt": "2026-10-24 16:00",
+          "request": "分析已有记录。",
+          "resultText": "记录不同执行之间的机器、运行环境及实际参数差异，避免把波动直接归因于代码。",
+          "progress": null,
+          "replyState": "delivered"
+        },
+        {
+          "id": "JOB-277",
+          "executionStatus": "running",
+          "createdAt": "2026-10-25 14:18",
+          "request": "同一用例两次执行结果不一致",
+          "resultText": null,
+          "progress": "正在比较两次执行的环境、版本与样本记录，尚未确认原因。",
+          "replyState": null
+        }
+      ]
+    },
+    {
+      "id": "OC-024",
+      "title": "CI 任务一直停留在准备阶段",
+      "description": "工作节点未领取任务",
+      "source": "我的私聊",
+      "area": "基础设施",
+      "owner": "我",
+      "time": "14:16",
+      "paused": false,
+      "jobs": [
+        {
+          "id": "JOB-276",
+          "executionStatus": "queued",
+          "createdAt": "2026-10-25 14:16",
+          "request": "工作节点未领取任务",
+          "resultText": null,
+          "progress": null,
+          "replyState": null
+        }
+      ]
+    },
+    {
+      "id": "OC-023",
+      "title": "任务日志接口暂时不可用",
+      "description": "连续请求返回服务异常",
+      "source": "性能 Oncall 群",
+      "area": "工具",
+      "owner": "许",
+      "time": "14:10",
+      "paused": false,
+      "jobs": [
+        {
+          "id": "JOB-175",
+          "executionStatus": "succeeded",
+          "createdAt": "2026-10-24 16:00",
+          "request": "分析已有记录。",
+          "resultText": "日志平台访问失败时，先记录取证缺口，保留原始问题，避免将工具故障当作业务根因。",
+          "progress": null,
+          "replyState": "delivered"
+        },
+        {
+          "id": "JOB-275",
+          "executionStatus": "failed",
+          "createdAt": "2026-10-25 14:10",
+          "request": "连续请求返回服务异常",
+          "resultText": "日志接口当前不可用，无法继续取证。这是调查工具的故障，不足以解释原始业务告警。",
+          "progress": null,
+          "replyState": "delivered"
+        }
+      ]
+    },
+    {
+      "id": "OC-022",
+      "title": "Sheet 测试账号登录失效",
+      "description": "页面重定向到登录页",
+      "source": "性能 Oncall 群",
+      "area": "Sheet",
+      "owner": "陈",
+      "time": "13:42",
+      "paused": false,
+      "jobs": [
+        {
+          "id": "JOB-274",
+          "executionStatus": "succeeded",
+          "createdAt": "2026-10-25 13:42",
+          "request": "页面重定向到登录页",
+          "resultText": "页面重定向记录与登录态检查结果一致，已确认测试账号登录失效。仅完成调查，未修改账号配置。",
+          "progress": null,
+          "replyState": "delivered"
+        }
+      ]
+    },
+    {
+      "id": "OC-021",
+      "title": "流水线缺少基线结果",
+      "description": "Base 因前序任务失败未生成结果",
+      "source": "我的私聊",
+      "area": "基础设施",
+      "owner": "我",
+      "time": "12:56",
+      "paused": false,
+      "jobs": [
+        {
+          "id": "JOB-273",
+          "executionStatus": "succeeded",
+          "createdAt": "2026-10-25 12:56",
+          "request": "Base 因前序任务失败未生成结果",
+          "resultText": "基线侧因前序任务失败未完成采样，当前没有可用于性能比较的成对结果。",
+          "progress": null,
+          "replyState": "delivered"
+        }
+      ]
+    }
+  ],
+  "cases": [
+    {
+      "id": "KB-012",
+      "topicId": "OC-028",
+      "title": "快照未就绪，不等于页面性能回退",
+      "tag": "Sheet",
+      "summary": "在正式采样前触发快照就绪断言，优先检查回放环境准备过程和模板依赖。当前没有证据将其归因为业务代码。",
+      "keywords": [
+        "快照",
+        "回放环境",
+        "采样前失败"
+      ],
+      "updated": "今天 14:32",
+      "conclusions": [
+        {
+          "text": "失败发生在正式采样前的快照就绪检查。",
+          "verification": "observed"
+        },
+        {
+          "text": "可能与回放环境准备时序或模板依赖有关，具体原因尚无充分证据。",
+          "verification": "unverified"
+        }
+      ],
+      "evidence": [
+        "任务执行日志 · assertReady",
+        "告警原话题 · 运行上下文",
+        "模板就绪检查 · 调用位置"
+      ],
+      "jobId": "JOB-280"
+    },
+    {
+      "id": "KB-011",
+      "topicId": "OC-022",
+      "title": "测试账号失效导致页面进入登录页",
+      "tag": "Sheet",
+      "summary": "任务截图与重定向记录共同确认登录状态失效。与页面性能指标无直接对应关系。",
+      "keywords": [
+        "账号",
+        "登录态",
+        "重定向"
+      ],
+      "updated": "今天 13:42",
+      "conclusions": [
+        {
+          "text": "截图显示登录页，登录态检查失败；两份证据相互印证。",
+          "verification": "verified"
+        }
+      ],
+      "evidence": [
+        "任务页面截图",
+        "登录态检查结果"
+      ],
+      "jobId": "JOB-274"
+    },
+    {
+      "id": "KB-010",
+      "topicId": "OC-021",
+      "title": "缺少基线样本时，保留结论边界",
+      "tag": "基础设施",
+      "summary": "基线侧未完成采样时，不能用待测侧单独的指标得出性能劣化结论。应先核对任务依赖与失败记录。",
+      "keywords": [
+        "基线缺失",
+        "任务依赖"
+      ],
+      "updated": "今天 12:56",
+      "conclusions": [
+        {
+          "text": "来源任务基线样本为空，前序任务存在明确失败记录。",
+          "verification": "verified"
+        }
+      ],
+      "evidence": [
+        "来源任务快照",
+        "前序调度日志"
+      ],
+      "jobId": "JOB-273"
+    },
+    {
+      "id": "KB-009",
+      "topicId": "OC-026",
+      "title": "资源 403 的权限与有效期检查",
+      "tag": "基础设施",
+      "summary": "资源请求已观察到 403。签名有效期、访问主体与资源权限仍需进一步核对。",
+      "keywords": [
+        "403",
+        "资源访问",
+        "权限"
+      ],
+      "updated": "昨天 17:26",
+      "conclusions": [
+        {
+          "text": "HTTP 403 为已观察事实；凭据过期尚未得到验证。",
+          "verification": "observed"
+        }
+      ],
+      "evidence": [
+        "资源请求记录",
+        "下载阶段错误栈"
+      ],
+      "jobId": "JOB-178"
+    },
+    {
+      "id": "KB-008",
+      "topicId": "OC-025",
+      "title": "同版本执行差异的环境核对记录",
+      "tag": "Slide",
+      "summary": "记录不同执行之间的机器、运行环境及实际参数差异，避免把波动直接归因于代码。",
+      "keywords": [
+        "环境差异",
+        "历史任务"
+      ],
+      "updated": "昨天 16:08",
+      "conclusions": [
+        {
+          "text": "两次执行环境不同；尚不能确认该差异是否解释全部现象。",
+          "verification": "observed"
+        }
+      ],
+      "evidence": [
+        "任务 A 快照",
+        "任务 B 快照",
+        "环境准备日志",
+        "样本明细"
+      ],
+      "jobId": "JOB-177"
+    },
+    {
+      "id": "KB-007",
+      "topicId": "OC-023",
+      "title": "工具失败与业务失败分开记录",
+      "tag": "工具",
+      "summary": "日志平台访问失败时，先记录取证缺口，保留原始问题，避免将工具故障当作业务根因。",
+      "keywords": [
+        "取证缺口",
+        "工具异常"
+      ],
+      "updated": "10月23日",
+      "conclusions": [
+        {
+          "text": "工具接口失败与原始告警时间不同，不能推断二者存在因果关系。",
+          "verification": "verified"
+        }
+      ],
+      "evidence": [
+        "工具调用结果",
+        "原始告警记录"
+      ],
+      "jobId": "JOB-175"
+    }
+  ],
+  "maxConcurrentJobs": 5,
+  "health": {
+    "state": "running",
+    "sampledAt": "2026-10-25 14:35",
+    "sampleStatus": "fresh"
+  },
+  "bindings": {
+    "groups": [
+      "性能 Oncall 群"
+    ],
+    "private": "我的私聊"
+  },
+  "repositories": [
+    {
+      "name": "性能基础设施",
+      "description": "任务执行与环境准备"
+    },
+    {
+      "name": "Web 业务",
+      "description": "业务实现参考"
+    },
+    {
+      "name": "回放工具",
+      "description": "回放与快照准备"
+    }
+  ],
+  "knowledgePaths": [
+    "/workspace/knowledge/oncall.md",
+    "/workspace/knowledge/tool-guide.md"
+  ]
+}

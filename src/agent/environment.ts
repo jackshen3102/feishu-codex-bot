@@ -1,6 +1,7 @@
 import os from "node:os";
 import path from "node:path";
 import type { AppConfig } from "../config.js";
+import { loadOncallConfig } from "../oncall/workspace-config.js";
 
 export function safeProxyEnvironment(): Record<string, string> {
   const proxyEnvironment: Record<string, string> = {};
@@ -22,12 +23,14 @@ export function safeProxyEnvironment(): Record<string, string> {
     }
     proxyEnvironment[name] = value;
   }
+  if (process.env.NO_PROXY) proxyEnvironment.NO_PROXY = process.env.NO_PROXY;
   return proxyEnvironment;
 }
 
 export function buildCommonAgentEnvironment(config: AppConfig): Record<string, string> {
   const locale = process.env.LC_ALL ?? process.env.LANG ?? "C.UTF-8";
   return {
+    ...(config.ONCALL_CONFIG_PATH ? loadOncallConfig(config.ONCALL_CONFIG_PATH).agentEnvironment : {}),
     PATH: process.env.PATH ?? "",
     HOME: path.dirname(config.CODEX_HOME),
     TMPDIR: process.env.TMPDIR ?? os.tmpdir(),

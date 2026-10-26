@@ -17,21 +17,28 @@ function isWithinOrEqual(parent: string, candidate: string): boolean {
 }
 
 const configSchema = z.object({
-  AGENT_BACKEND: z.literal("codex").default("codex"),
+  AGENT_BACKEND: z.enum(["codex", "traex"]).default("codex"),
+  TRAEX_HOME: normalizedAbsolutePath.optional(),
+  TRAEX_BINARY: normalizedAbsolutePath.optional(),
   FEISHU_APP_ID: z.string().min(1),
   FEISHU_APP_SECRET: z.string().min(1),
-  FEISHU_CHAT_ID: z.string().min(1),
-  FEISHU_PRIVATE_CHAT_ID: z.string().min(1),
+  FEISHU_CHAT_ID: z.string().default(""),
+  FEISHU_PRIVATE_CHAT_ID: z.string().default(""),
+  ONCALL_CONFIG_PATH: normalizedAbsolutePath.optional(),
   CODEX_HOME: normalizedAbsolutePath,
   STATE_DB_PATH: normalizedAbsolutePath,
   WORKSPACE_ROOT: normalizedAbsolutePath,
-  MAX_CONCURRENT_TURNS: z.coerce.number().int().min(1),
-  TURN_TIMEOUT_MS: z.coerce.number().int().min(60_000),
+  MAX_CONCURRENT_TURNS: z.coerce.number().int().min(1).default(5),
+  TURN_TIMEOUT_MS: z.coerce.number().int().refine((n) => n === 0 || n >= 60_000).default(0),
   WORKSPACE_RETENTION_DAYS: z.coerce.number().int().min(1),
   JOB_RETENTION_DAYS: z.coerce.number().int().min(1).default(90),
 }).superRefine((value, context) => {
-  if (value.FEISHU_CHAT_ID === value.FEISHU_PRIVATE_CHAT_ID) {
+  if (!value.ONCALL_CONFIG_PATH && (!value.FEISHU_CHAT_ID || !value.FEISHU_PRIVATE_CHAT_ID || value.FEISHU_CHAT_ID === value.FEISHU_PRIVATE_CHAT_ID)) {
     context.addIssue({ code: "custom", path: ["FEISHU_PRIVATE_CHAT_ID"], message: "must differ from FEISHU_CHAT_ID" });
+  }
+  const traeHome = value.TRAEX_HOME ?? path.join(path.dirname(value.CODEX_HOME), "traex");
+  if (isWithinOrEqual(value.WORKSPACE_ROOT, traeHome) || isWithinOrEqual(traeHome, value.WORKSPACE_ROOT) || isWithinOrEqual(value.CODEX_HOME, traeHome) || isWithinOrEqual(traeHome, value.CODEX_HOME) || isWithinOrEqual(traeHome, value.STATE_DB_PATH)) {
+    context.addIssue({ code: "custom", path: ["TRAEX_HOME"], message: "must not overlap workspaces, CODEX_HOME or database" });
   }
   if (value.STATE_DB_PATH === value.CODEX_HOME || value.STATE_DB_PATH === value.WORKSPACE_ROOT) {
     context.addIssue({ code: "custom", path: ["STATE_DB_PATH"], message: "must name a file" });
@@ -44,7 +51,7 @@ const configSchema = z.object({
   }
 });
 
-export type AgentBackend = "codex";
+export type AgentBackend = "codex" | "traex";
 export type AppConfig = z.infer<typeof configSchema>;
 export type CodexAppConfig = AppConfig;
 
@@ -65,8 +72,12 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AppCon
   throw new ConfigError(variables);
 }
 
+export function traexHome(config: AppConfig): string {
+  return config.TRAEX_HOME ?? path.join(path.dirname(config.CODEX_HOME), "traex");
+}
+
 export function activeAgentHome(config: AppConfig): string {
-  return config.CODEX_HOME;
+  return config.AGENT_BACKEND === "traex" ? traexHome(config) : config.CODEX_HOME;
 }
 
 export function containsProtectedCredential(config: AppConfig, value: string): boolean {

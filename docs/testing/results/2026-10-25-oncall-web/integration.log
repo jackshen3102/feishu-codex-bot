@@ -1,0 +1,14 @@
+$ tsx scripts/verify-management-web.ts
+PASS authentication for page, assets and APIs
+PASS read-only methods, local origin and static allowlist
+PASS workspace and topic/job ownership
+PASS all reply fragments aggregate independently of execution
+PASS pause, stopping, queues, input preparation and inconsistent execution remain distinct
+PASS round-specific history and corrupt/missing input degrade safely
+PASS keyset pagination, literal search and conclusion verification filter
+PASS fresh, stale and unavailable health
+PASS opening and all HTTP reads leave schema and business rows unchanged
+PASS live WAL commits remain visible
+PASS optional configuration defaults off
+PASS HEAD and idempotent bounded shutdown
+Management Web integration verification passed

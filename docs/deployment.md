@@ -1,27 +1,28 @@
-# Linux deployment
+# Docker deployment
 
-The installer targets Linux with systemd, Node.js 22, pnpm, and user namespaces. Install Codex for the dedicated service user before starting the bot.
+The default image contains Node.js 22, public dependencies and the bundled Codex runtime. Business tools and organization-specific authentication belong in separately built extension images.
 
-Set these shell variables to normalized, nonoverlapping absolute paths:
+Prepare protected files outside the checkout: a gateway environment file, `config/oncall.json`, a knowledge directory and a dedicated tool configuration directory. Set `ONCALL_ENV_FILE`, `ONCALL_CONFIG_DIR`, `ONCALL_KNOWLEDGE_DIR` and `ONCALL_TOOL_HOME` in a Compose environment file. Follow [configuration](configuration.md) for the required application and workspace fields.
 
-```bash
-export INSTALL_ROOT="<program-directory>"
-export STATE_ROOT="<state-directory>"
-export ENV_FILE="<root-readable-environment-file>"
-export UNIT_FILE="<systemd-unit-file>"
-export SERVICE_USER="feishu-codex"
-export SERVICE_GROUP="feishu-codex"
+```sh
+docker compose --env-file /path/to/compose.env config --quiet
+docker compose --env-file /path/to/compose.env build bot
+docker compose --env-file /path/to/compose.env run --rm --no-deps bot pnpm preflight -- --offline
 ```
 
-Create `ENV_FILE` with the variables in [configuration](configuration.md), owned by root with mode `0600`. Run the installer from the repository root:
+The preflight command does not connect a Feishu WebSocket. Complete the dedicated Codex login and required Feishu application setup before starting the sole live client. Do not copy unrelated host credentials or configuration.
 
-```bash
-sudo env INSTALL_ROOT="$INSTALL_ROOT" STATE_ROOT="$STATE_ROOT" \
-  ENV_FILE="$ENV_FILE" UNIT_FILE="$UNIT_FILE" \
-  SERVICE_USER="$SERVICE_USER" SERVICE_GROUP="$SERVICE_GROUP" \
-  ./scripts/install.sh
+```sh
+docker compose --env-file /path/to/compose.env up -d --no-build bot
+docker compose --env-file /path/to/compose.env exec bot pnpm status
 ```
 
-Log in to Codex as the service user with `HOME="$STATE_ROOT"` and `CODEX_HOME="$STATE_ROOT/codex-home"`. Run `pnpm preflight` under that same identity and environment while the service is stopped. Then enable and start the installed systemd unit.
+The persistent volume retains the database, session state and topic workspaces. Before replacing the bot, wait for active execution and delivery to finish, stop the service and back up its data/configuration. Running jobs are never replayed automatically after interruption. Use uniquely tagged matching images for rollback, preserving any newer business data.
 
-Before updating, stop the unit and back up the SQLite database together with any WAL files. Reinstall using the same paths and run preflight before restarting. An interrupted running job is reported as interrupted after restart and is never rerun automatically.
+## Local management page
+
+Combine `compose.yaml` and `compose.web.yaml` to expose the local management page at http://localhost:6193. It reads private as well as group records. Authentication-free access is intended for the existing local preview boundary; use an explicit authentication integration for an external entry.
+
+## Custom images
+
+A separate repository can derive from the `runtime` image to install its own tools and authenticated entrypoint. Fixed-version integration packages use the [public API](extensions.md). Supply proxy settings and CA trust to dependency-installing build stages without embedding account credentials.

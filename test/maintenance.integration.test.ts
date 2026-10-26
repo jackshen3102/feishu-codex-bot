@@ -72,7 +72,7 @@ describe("bounded operational state", () => {
       expect(status).toMatchObject({
         version: 1,
         service: { state: "running", lastIngressAt: "2026-09-03T00:00:00.000Z" },
-        schemaVersion: 11,
+        schemaVersion: 13,
         backend: "codex",
         lastExecution: null,
         jobs: { queued: 1 },

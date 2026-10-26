@@ -3,6 +3,9 @@ set -euo pipefail
 
 if [[ "${1:-}" == "--feishu-isolated-child" ]]; then
   shift
+  if [[ "${FEISHU_AGENT_BACKEND:-}" == "traex" ]]; then
+    exec "${FEISHU_AGENT_SUPERVISOR}" "$@"
+  fi
   exec "${FEISHU_CODEX_BINARY}" --config 'features.shell_snapshot=false' "$@"
 fi
 
@@ -13,7 +16,7 @@ if [[ -z "${unshare_bin}" || ! -x "${unshare_bin}" ]]; then
 fi
 
 real_codex="${FEISHU_CODEX_BINARY:-}"
-if [[ -z "${real_codex}" || ! -x "${real_codex}" ]]; then
+if [[ -z "${real_codex}" ]] || ! command -v "${real_codex}" >/dev/null 2>&1; then
   echo "Bundled Codex CLI is unavailable." >&2
   exit 127
 fi
